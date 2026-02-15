@@ -3,7 +3,7 @@ name: Daily Journal Refresh
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 2 * * *"
+    - cron: "0 * * * *"
 
 jobs:
   refresh:
