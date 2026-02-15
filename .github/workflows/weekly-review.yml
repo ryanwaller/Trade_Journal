@@ -25,8 +25,8 @@ jobs:
         run: |
           DOW="$(TZ=America/New_York date +%u)"
           HOUR="$(TZ=America/New_York date +%H)"
-          if [ "$DOW" != "5" ] || [ "$HOUR" != "17" ]; then
-            echo "Not Friday 5PM ET. Skipping."
+          if [ "$DOW" != "5" ] || [ "$HOUR" != "16" ]; then
+            echo "Not Friday 4PM ET. Skipping."
             exit 0
           fi
 
