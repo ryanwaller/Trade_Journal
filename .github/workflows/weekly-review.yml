@@ -21,32 +21,42 @@ jobs:
       SNAPTRADE_FETCH_START_DATE: "2025-01-01"
       SNAPTRADE_START_DATE: "2026-01-01"
     steps:
-      - name: Guard Friday 5PM ET
+      - name: Guard Friday 4PM ET
+        id: guard
         run: |
           DOW="$(TZ=America/New_York date +%u)"
           HOUR="$(TZ=America/New_York date +%H)"
           if [ "$DOW" != "5" ] || [ "$HOUR" != "16" ]; then
             echo "Not Friday 4PM ET. Skipping."
-            exit 0
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.should_run == 'true'
 
       - uses: actions/setup-node@v4
+        if: steps.guard.outputs.should_run == 'true'
         with:
           node-version: "20"
           cache: "npm"
 
       - run: npm ci
+        if: steps.guard.outputs.should_run == 'true'
 
       - name: Rebuild Positions
+        if: steps.guard.outputs.should_run == 'true'
         run: npm run rebuild-positions
 
       - name: Rebuild Daily Summary
+        if: steps.guard.outputs.should_run == 'true'
         run: npm run rebuild-daily-summary
 
       - name: Audit Journal
+        if: steps.guard.outputs.should_run == 'true'
         run: npm run audit-journal
 
       - name: Publish Weekly Review
+        if: steps.guard.outputs.should_run == 'true'
         run: npm run weekly-review
