@@ -5,3 +5,6 @@ node_modules
 dist
 imports/fidelity/raw
 imports/fidelity/processed
+imports/fidelity/positions
+imports/public/pdfs
+imports/public/history

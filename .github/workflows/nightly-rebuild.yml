@@ -48,6 +48,10 @@ jobs:
         if: steps.guard.outputs.should_run == 'true'
         run: npm run rebuild-positions
 
+      - name: Reconcile Open Positions
+        if: steps.guard.outputs.should_run == 'true'
+        run: npm run reconcile-open
+
       - name: Rebuild Daily Summary
         if: steps.guard.outputs.should_run == 'true'
         run: npm run rebuild-daily-summary

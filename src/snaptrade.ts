@@ -27,6 +27,15 @@ export type SnapTradeOrder = {
   realized_pl?: number | null;
 };
 
+export type SnapTradePosition = {
+  account_id: string;
+  symbol_key: string;
+  ticker: string;
+  units: number;
+  average_purchase_price: number | null;
+  price: number | null;
+};
+
 const snaptrade = new Snaptrade({
   clientId: config.SNAPTRADE_CLIENT_ID,
   consumerKey: config.SNAPTRADE_CONSUMER_KEY
@@ -167,6 +176,136 @@ export async function getAccountOrders(
     const filledStatus = status === "EXECUTED" || status === "PARTIAL";
     return filled && filledStatus;
   });
+}
+
+function normalizeSymbolKey(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim().replace(/^[-+]/, "");
+  if (!trimmed) return null;
+  const compact = trimmed.replace(/\s+/g, "").toUpperCase();
+  const m = compact.match(/^([A-Z.\-]+)(\d{6}[CP]\d+)$/);
+  if (!m) return compact;
+  return `${m[1]} ${m[2]}`;
+}
+
+function extractTickerFromSymbolKey(symbolKey: string) {
+  const compact = symbolKey.replace(/\s+/g, "");
+  const m = compact.match(/^([A-Z.\-]+)(\d{6}[CP]\d+)$/);
+  if (m) return m[1];
+  return compact.match(/^([A-Z.\-]+)/)?.[1] ?? compact;
+}
+
+export async function getAccountPositions(accountId: string): Promise<SnapTradePosition[]> {
+  const { userId, userSecret } = requireUser();
+  const response = await snaptrade.accountInformation.getUserAccountPositions({
+    userId,
+    userSecret,
+    accountId
+  });
+
+  const data = (response as any).data ?? response;
+  const toNumber = (value: any) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const equityLike = (data ?? [])
+    .map((position: any) => {
+      const units = toNumber(position.units ?? position.fractional_units);
+      if (units === null) return null;
+
+      const rawSymbolKey =
+        position.symbol?.symbol?.raw_symbol ??
+        position.symbol?.symbol?.symbol ??
+        position.symbol?.local_id ??
+        position.symbol?.description ??
+        null;
+      const symbolKey = normalizeSymbolKey(rawSymbolKey);
+      if (!symbolKey) return null;
+
+      const tickerCandidate =
+        position.symbol?.symbol?.symbol ??
+        position.symbol?.description ??
+        extractTickerFromSymbolKey(symbolKey);
+      const ticker = String(tickerCandidate ?? extractTickerFromSymbolKey(symbolKey))
+        .trim()
+        .split(/\s+/)[0]
+        .replace(/[^A-Za-z0-9.\-]/g, "")
+        .toUpperCase();
+
+      return {
+        account_id: accountId,
+        symbol_key: symbolKey,
+        ticker: ticker || extractTickerFromSymbolKey(symbolKey),
+        units: Math.abs(units),
+        average_purchase_price: toNumber(position.average_purchase_price),
+        price: toNumber(position.price)
+      } satisfies SnapTradePosition;
+    })
+    .filter((p: SnapTradePosition | null): p is SnapTradePosition => {
+      return Boolean(p && Number.isFinite(p.units) && p.units > 0);
+    });
+
+  // Some brokerages expose options only through the options holdings endpoint.
+  let optionsLike: SnapTradePosition[] = [];
+  try {
+    const optResponse = await (snaptrade as any).options.listOptionHoldings({
+      userId,
+      userSecret,
+      accountId
+    });
+    const optData = (optResponse as any).data ?? optResponse;
+    optionsLike = (optData ?? [])
+      .map((position: any) => {
+        const units = toNumber(position.units);
+        if (units === null) return null;
+
+        const rawSymbolKey =
+          position.symbol?.option_symbol?.ticker ??
+          position.symbol?.symbol?.raw_symbol ??
+          position.symbol?.symbol?.symbol ??
+          position.symbol?.description ??
+          null;
+        const symbolKey = normalizeSymbolKey(rawSymbolKey);
+        if (!symbolKey) return null;
+
+        const tickerCandidate =
+          position.symbol?.option_symbol?.underlying_symbol?.ticker ??
+          extractTickerFromSymbolKey(symbolKey);
+        const ticker = String(tickerCandidate ?? "").trim().toUpperCase();
+
+        return {
+          account_id: accountId,
+          symbol_key: symbolKey,
+          ticker: ticker || extractTickerFromSymbolKey(symbolKey),
+          units: Math.abs(units),
+          average_purchase_price: toNumber(position.average_purchase_price),
+          price: toNumber(position.price)
+        } satisfies SnapTradePosition;
+      })
+      .filter((p: SnapTradePosition | null): p is SnapTradePosition => {
+        return Boolean(p && Number.isFinite(p.units) && p.units > 0);
+      });
+  } catch {
+    optionsLike = [];
+  }
+
+  const merged = new Map<string, SnapTradePosition>();
+  for (const p of [...equityLike, ...optionsLike]) {
+    const key = `${p.account_id}|${normalizeSymbolKey(p.symbol_key)}`;
+    if (!merged.has(key)) {
+      merged.set(key, p);
+      continue;
+    }
+    const prev = merged.get(key)!;
+    // Prefer row with non-null average purchase price.
+    if (prev.average_purchase_price === null && p.average_purchase_price !== null) {
+      merged.set(key, p);
+    }
+  }
+
+  return Array.from(merged.values());
 }
 
 export async function getAccountOrdersChunked(

@@ -70,6 +70,12 @@ Rebuild positions (archives all existing rows and creates one row per contract):
 npm run rebuild-positions
 ```
 
+Reconcile open positions to live SnapTrade holdings (Public/Robinhood):
+
+```bash
+npm run reconcile-open
+```
+
 Audit journal consistency:
 
 ```bash
@@ -95,9 +101,50 @@ npm run import-fidelity
 ```
 
 Notes:
-- Rows are tagged with broker labels like `Fidelity (Fun)` using account names.
+- Broker is set to `Fidelity`; account is normalized to `Fun`, `IRA Roth`, or `IRA Trad`.
 - Raw files are moved to `imports/fidelity/processed` after a successful import.
 - Existing `Fidelity*` trade rows are archived and rebuilt to avoid duplicates.
+
+Import Fidelity open holdings snapshots (from `imports/fidelity/positions`):
+
+```bash
+npm run import-fidelity-positions
+```
+
+This updates/creates open Fidelity rows from current holdings and archives stale Fidelity open rows not in the snapshot.
+
+Watch Fidelity folders and auto-run imports when CSV files change:
+
+```bash
+npm run watch-fidelity
+```
+
+Notes:
+- Watches `imports/fidelity/raw` and `imports/fidelity/positions`.
+- Runs only the needed importer(s), then `rebuild-daily-summary`.
+- Keep this running on your Mac; stop with `Ctrl+C`.
+
+Import Public monthly statement PDFs (from `imports/public/pdfs`):
+
+```bash
+npm run import-public-pdf
+```
+
+Notes:
+- This parser supports Apex statement PDFs (e.g. `Doc_-991_STATEMENT_...pdf`).
+- It focuses on options trades in transaction sections.
+- Imported rows are labeled with broker `Public (PDF)` to avoid clobbering live SnapTrade Public rows.
+
+Import Public full history export text (default path `imports/public/history/data.txt`):
+
+```bash
+npm run import-public-history
+```
+
+Notes:
+- This archives previous `Public (History)` rows and any `Public (PDF)` rows, then rebuilds from the text file.
+- Imported rows are labeled with broker `Public (History)`.
+- Override file path with `PUBLIC_HISTORY_FILE=/absolute/path/to/data.txt`.
 
 Manual HTTP sync (after deploy):
 
@@ -135,16 +182,19 @@ If you want jobs to run when your laptop is off, use the included workflows:
 
 ### Behavior
 - `daily-refresh.yml` runs hourly and executes:
+  - `npm run reconcile-open`
   - `npm run rebuild-daily-summary`
   - `npm run audit-journal`
   - `npm run freshness-check`
 - `nightly-rebuild.yml` checks hourly, but only runs at 10PM New York time:
   - `npm run rebuild-positions`
+  - `npm run reconcile-open`
   - `npm run rebuild-daily-summary`
   - `npm run audit-journal`
   - `npm run freshness-check`
 - `weekly-review.yml` checks every hour, but only runs at Friday 4PM New York time:
   - `npm run rebuild-positions`
+  - `npm run reconcile-open`
   - `npm run rebuild-daily-summary`
   - `npm run audit-journal`
   - `npm run weekly-review`

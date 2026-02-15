@@ -2,11 +2,16 @@ import { randomUUID } from "crypto";
 import { config } from "./config.js";
 import { getLoginUrl, registerUser } from "./snaptrade.js";
 import { runBackfill, runRebuildPositions, runSync } from "./sync.js";
-import { archiveZeroQtyPages, auditJournal } from "./notion.js";
+import { archiveZeroQtyPages, auditJournal, normalizeFidelityBrokerLabels } from "./notion.js";
 import { runWeeklyReview } from "./weekly-review.js";
 import { runRebuildDailySummary } from "./daily-summary.js";
 import { runFreshnessCheck } from "./freshness.js";
 import { runImportFidelity } from "./fidelity.js";
+import { runImportFidelityPositions } from "./fidelity-positions.js";
+import { runSnaptradeReconcileOpen } from "./snaptrade-reconcile.js";
+import { runImportPublicPdf } from "./public-pdf.js";
+import { runImportPublicHistory } from "./public-history.js";
+import { runWatchFidelity } from "./fidelity-watch.js";
 
 const command = process.argv[2];
 
@@ -31,6 +36,12 @@ async function run() {
 
   if (command === "audit-journal") {
     const result = await auditJournal();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "normalize-fidelity-broker") {
+    const result = await normalizeFidelityBrokerLabels();
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -65,6 +76,35 @@ async function run() {
     return;
   }
 
+  if (command === "import-fidelity-positions") {
+    const result = await runImportFidelityPositions();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "reconcile-open") {
+    const result = await runSnaptradeReconcileOpen();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "import-public-pdf") {
+    const result = await runImportPublicPdf();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "import-public-history") {
+    const result = await runImportPublicHistory();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "watch-fidelity") {
+    await runWatchFidelity();
+    return;
+  }
+
   if (command === "connect") {
     const existingUserId = config.SNAPTRADE_USER_ID;
     const existingUserSecret = config.SNAPTRADE_USER_SECRET;
@@ -93,7 +133,7 @@ async function run() {
   }
 
   console.log(
-    "Usage: npm run sync | npm run connect | npm run backfill | npm run cleanup-zero-qty | npm run rebuild-positions | npm run audit-journal | npm run weekly-review | npm run rebuild-daily-summary | npm run freshness-check | npm run import-fidelity"
+    "Usage: npm run sync | npm run connect | npm run backfill | npm run cleanup-zero-qty | npm run rebuild-positions | npm run audit-journal | npm run normalize-fidelity-broker | npm run weekly-review | npm run rebuild-daily-summary | npm run freshness-check | npm run import-fidelity | npm run import-fidelity-positions | npm run reconcile-open | npm run import-public-pdf | npm run import-public-history | npm run watch-fidelity"
   );
 }
 

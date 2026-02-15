@@ -397,7 +397,14 @@ export async function archiveAllPages() {
         brokerProp?.type === "select" ? brokerProp.select?.name ?? "" : "";
       const rowTypeName =
         rowTypeProp?.type === "select" ? rowTypeProp.select?.name ?? "" : "";
-      if (rowTypeName === "Trade" && brokerName.startsWith("Fidelity")) {
+      if (
+        rowTypeName === "Trade" &&
+        (
+          brokerName.startsWith("Fidelity") ||
+          brokerName.startsWith("Public (PDF)") ||
+          brokerName.startsWith("Public (History)")
+        )
+      ) {
         continue;
       }
       await client.pages.update({
@@ -583,6 +590,55 @@ export async function archiveZeroQtyPages() {
   } while (cursor);
 
   return { archived };
+}
+
+export async function normalizeFidelityBrokerLabels() {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  let cursor: string | undefined;
+  let updated = 0;
+
+  const legacyToAccount: Record<string, string> = {
+    "Fidelity (Fun)": "Fun",
+    "Fidelity (IRA Roth)": "IRA Roth",
+    "Fidelity (IRA Trad)": "IRA Trad"
+  };
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor
+    });
+
+    for (const page of response.results as any[]) {
+      if (page.archived) continue;
+      const broker = getSelectValue(page, PROPERTY.broker);
+      const rowType = getSelectValue(page, PROPERTY.rowType);
+      if (rowType !== "Trade") continue;
+
+      const mappedAccount = legacyToAccount[broker];
+      if (!mappedAccount) continue;
+
+      const existingAccount = getRichTextValue(page, PROPERTY.account);
+      const properties: Record<string, any> = {};
+      if (info.properties[PROPERTY.broker]) {
+        properties[PROPERTY.broker] = { select: { name: "Fidelity" } };
+      }
+      if (!existingAccount && info.properties[PROPERTY.account]) {
+        properties[PROPERTY.account] = { rich_text: [{ text: { content: mappedAccount } }] };
+      }
+
+      await client.pages.update({
+        page_id: page.id,
+        properties
+      });
+      updated += 1;
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return { updated };
 }
 
 type AuditItem = {

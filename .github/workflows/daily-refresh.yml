@@ -33,6 +33,9 @@ jobs:
       - name: Rebuild Daily Summary
         run: npm run rebuild-daily-summary
 
+      - name: Reconcile Open Positions
+        run: npm run reconcile-open
+
       - name: Audit Journal
         run: npm run audit-journal
 

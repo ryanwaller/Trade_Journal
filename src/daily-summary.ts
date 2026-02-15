@@ -50,7 +50,7 @@ async function fetchAllRows() {
       database_id: info.databaseId,
       start_cursor: cursor
     });
-    rows.push(...response.results);
+    rows.push(...response.results.filter((page: any) => !page.archived));
     cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
   } while (cursor);
 
