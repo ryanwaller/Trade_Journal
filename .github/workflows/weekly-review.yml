@@ -1,0 +1,52 @@
+name: Weekly Review
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+jobs:
+  weekly_review:
+    runs-on: ubuntu-latest
+    env:
+      SNAPTRADE_CLIENT_ID: ${{ secrets.SNAPTRADE_CLIENT_ID }}
+      SNAPTRADE_CONSUMER_KEY: ${{ secrets.SNAPTRADE_CONSUMER_KEY }}
+      SNAPTRADE_USER_ID: ${{ secrets.SNAPTRADE_USER_ID }}
+      SNAPTRADE_USER_SECRET: ${{ secrets.SNAPTRADE_USER_SECRET }}
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+      NOTION_WEEKLY_REVIEWS_PAGE_ID: ${{ secrets.NOTION_WEEKLY_REVIEWS_PAGE_ID }}
+      NOTION_TIMEZONE: America/New_York
+      SNAPTRADE_INCLUDE_ALL: "1"
+      SNAPTRADE_FETCH_START_DATE: "2025-01-01"
+      SNAPTRADE_START_DATE: "2026-01-01"
+    steps:
+      - name: Guard Friday 5PM ET
+        run: |
+          DOW="$(TZ=America/New_York date +%u)"
+          HOUR="$(TZ=America/New_York date +%H)"
+          if [ "$DOW" != "5" ] || [ "$HOUR" != "17" ]; then
+            echo "Not Friday 5PM ET. Skipping."
+            exit 0
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Rebuild Positions
+        run: npm run rebuild-positions
+
+      - name: Rebuild Daily Summary
+        run: npm run rebuild-daily-summary
+
+      - name: Audit Journal
+        run: npm run audit-journal
+
+      - name: Publish Weekly Review
+        run: npm run weekly-review

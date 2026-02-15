@@ -1,0 +1,33 @@
+{
+  "name": "snaptrade-notion-journal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "sync": "tsx src/cli.ts sync",
+    "backfill": "tsx src/cli.ts backfill",
+    "cleanup-zero-qty": "tsx src/cli.ts cleanup-zero-qty",
+    "rebuild-positions": "tsx src/cli.ts rebuild-positions",
+    "audit-journal": "tsx src/cli.ts audit-journal",
+    "weekly-review": "tsx src/cli.ts weekly-review",
+    "rebuild-daily-summary": "tsx src/cli.ts rebuild-daily-summary",
+    "connect": "tsx src/cli.ts connect",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.14",
+    "dotenv": "^16.4.7",
+    "express": "^4.19.2",
+    "snaptrade-typescript-sdk": "^8.14.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.2"
+  }
+}
