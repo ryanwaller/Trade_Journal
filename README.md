@@ -88,6 +88,17 @@ Rebuild calendar daily summary rows:
 npm run rebuild-daily-summary
 ```
 
+Import Fidelity CSV batches (from `imports/fidelity/raw`):
+
+```bash
+npm run import-fidelity
+```
+
+Notes:
+- Rows are tagged with broker labels like `Fidelity (Fun)` using account names.
+- Raw files are moved to `imports/fidelity/processed` after a successful import.
+- Existing `Fidelity*` trade rows are archived and rebuilt to avoid duplicates.
+
 Manual HTTP sync (after deploy):
 
 ```bash

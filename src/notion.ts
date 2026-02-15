@@ -390,8 +390,54 @@ export async function archiveAllPages() {
       if ((page as any).archived) {
         continue;
       }
+      // Preserve manually imported Fidelity trade rows during SnapTrade rebuilds.
+      const brokerProp = (page as any).properties?.[PROPERTY.broker];
+      const rowTypeProp = (page as any).properties?.[PROPERTY.rowType];
+      const brokerName =
+        brokerProp?.type === "select" ? brokerProp.select?.name ?? "" : "";
+      const rowTypeName =
+        rowTypeProp?.type === "select" ? rowTypeProp.select?.name ?? "" : "";
+      if (rowTypeName === "Trade" && brokerName.startsWith("Fidelity")) {
+        continue;
+      }
       await client.pages.update({
         page_id: page.id,
+        archived: true
+      });
+      archived += 1;
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return { archived };
+}
+
+export async function archiveTradePagesByBrokerPrefix(prefix: string) {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  let cursor: string | undefined;
+  let archived = 0;
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor
+    });
+
+    for (const page of response.results) {
+      if ((page as any).archived) continue;
+      const brokerProp = (page as any).properties?.[PROPERTY.broker];
+      const rowTypeProp = (page as any).properties?.[PROPERTY.rowType];
+      const brokerName =
+        brokerProp?.type === "select" ? brokerProp.select?.name ?? "" : "";
+      const rowTypeName =
+        rowTypeProp?.type === "select" ? rowTypeProp.select?.name ?? "" : "";
+      if (rowTypeName !== "Trade" || !brokerName.startsWith(prefix)) {
+        continue;
+      }
+      await client.pages.update({
+        page_id: (page as any).id,
         archived: true
       });
       archived += 1;

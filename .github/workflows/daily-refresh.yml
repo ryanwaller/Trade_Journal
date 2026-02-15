@@ -19,7 +19,7 @@ jobs:
       NOTION_TIMEZONE: America/New_York
       SNAPTRADE_INCLUDE_ALL: "1"
       SNAPTRADE_FETCH_START_DATE: "2025-01-01"
-      SNAPTRADE_START_DATE: "2026-01-01"
+      SNAPTRADE_START_DATE: "2025-01-01"
     steps:
       - uses: actions/checkout@v4
 

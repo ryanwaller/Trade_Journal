@@ -16,6 +16,7 @@
     "freshness-check": "tsx src/cli.ts freshness-check",
     "weekly-review": "tsx src/cli.ts weekly-review",
     "rebuild-daily-summary": "tsx src/cli.ts rebuild-daily-summary",
+    "import-fidelity": "tsx src/cli.ts import-fidelity",
     "connect": "tsx src/cli.ts connect",
     "build": "tsc",
     "start": "node dist/server.js"
