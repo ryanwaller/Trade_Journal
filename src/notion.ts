@@ -204,6 +204,7 @@ export async function createTradePage(
     PROPERTY.ticker,
     symbol ? { rich_text: [{ text: { content: symbol } }] } : { rich_text: [] }
   );
+  addIfExists(PROPERTY.rowType, { select: { name: "Trade" } });
   addIfExists(PROPERTY.side, side ? { select: { name: side } } : { select: null });
   addIfExists(PROPERTY.qty, typeof qty === "number" ? { number: qty } : { number: null });
   addIfExists(
@@ -281,6 +282,7 @@ export async function createPositionPage(params: {
     PROPERTY.ticker,
     params.ticker ? { rich_text: [{ text: { content: params.ticker } }] } : { rich_text: [] }
   );
+  addIfExists(PROPERTY.rowType, { select: { name: "Trade" } });
   addIfExists(
     PROPERTY.contractKey,
     params.contractKey
@@ -339,6 +341,7 @@ export async function updatePositionPage(params: {
     PROPERTY.ticker,
     params.ticker ? { rich_text: [{ text: { content: params.ticker } }] } : { rich_text: [] }
   );
+  addIfExists(PROPERTY.rowType, { select: { name: "Trade" } });
   addIfExists(
     PROPERTY.contractKey,
     params.contractKey
@@ -465,6 +468,7 @@ export async function updateTradePage(
       title: [{ text: { content: symbol || "Trade" } }]
     };
   }
+  addIfExists(PROPERTY.rowType, { select: { name: "Trade" } });
 
   addIfExists(
     PROPERTY.ticker,
