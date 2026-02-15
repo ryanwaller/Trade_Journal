@@ -38,3 +38,6 @@ jobs:
 
       - name: Audit Journal
         run: npm run audit-journal
+
+      - name: Freshness Check
+        run: npm run freshness-check

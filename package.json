@@ -13,6 +13,7 @@
     "cleanup-zero-qty": "tsx src/cli.ts cleanup-zero-qty",
     "rebuild-positions": "tsx src/cli.ts rebuild-positions",
     "audit-journal": "tsx src/cli.ts audit-journal",
+    "freshness-check": "tsx src/cli.ts freshness-check",
     "weekly-review": "tsx src/cli.ts weekly-review",
     "rebuild-daily-summary": "tsx src/cli.ts rebuild-daily-summary",
     "connect": "tsx src/cli.ts connect",

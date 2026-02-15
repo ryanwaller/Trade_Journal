@@ -5,6 +5,7 @@ import { runBackfill, runRebuildPositions, runSync } from "./sync.js";
 import { archiveZeroQtyPages, auditJournal } from "./notion.js";
 import { runWeeklyReview } from "./weekly-review.js";
 import { runRebuildDailySummary } from "./daily-summary.js";
+import { runFreshnessCheck } from "./freshness.js";
 
 const command = process.argv[2];
 
@@ -51,6 +52,12 @@ async function run() {
     return;
   }
 
+  if (command === "freshness-check") {
+    const result = await runFreshnessCheck();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
   if (command === "connect") {
     const existingUserId = config.SNAPTRADE_USER_ID;
     const existingUserSecret = config.SNAPTRADE_USER_SECRET;
@@ -79,7 +86,7 @@ async function run() {
   }
 
   console.log(
-    "Usage: npm run sync | npm run connect | npm run backfill | npm run cleanup-zero-qty | npm run rebuild-positions | npm run audit-journal | npm run weekly-review | npm run rebuild-daily-summary"
+    "Usage: npm run sync | npm run connect | npm run backfill | npm run cleanup-zero-qty | npm run rebuild-positions | npm run audit-journal | npm run weekly-review | npm run rebuild-daily-summary | npm run freshness-check"
   );
 }
 
