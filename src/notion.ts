@@ -382,6 +382,11 @@ export async function archiveAllPages() {
     });
 
     for (const page of response.results) {
+      // Notion can return archived pages in query results; skip those to avoid
+      // "Can't edit block that is archived" errors on repeated runs.
+      if ((page as any).archived) {
+        continue;
+      }
       await client.pages.update({
         page_id: page.id,
         archived: true
