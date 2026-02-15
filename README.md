@@ -110,6 +110,7 @@ npm run sync
 If you want jobs to run when your laptop is off, use the included workflows:
 
 - `.github/workflows/daily-refresh.yml`
+- `.github/workflows/nightly-rebuild.yml`
 - `.github/workflows/weekly-review.yml`
 
 ### Required GitHub repo secrets
@@ -123,6 +124,10 @@ If you want jobs to run when your laptop is off, use the included workflows:
 
 ### Behavior
 - `daily-refresh.yml` runs hourly and executes:
+  - `npm run rebuild-daily-summary`
+  - `npm run audit-journal`
+  - `npm run freshness-check`
+- `nightly-rebuild.yml` checks hourly, but only runs at 10PM New York time:
   - `npm run rebuild-positions`
   - `npm run rebuild-daily-summary`
   - `npm run audit-journal`

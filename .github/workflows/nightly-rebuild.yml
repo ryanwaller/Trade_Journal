@@ -1,4 +1,4 @@
-name: Journal Fast Refresh
+name: Journal Nightly Rebuild
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     - cron: "0 * * * *"
 
 jobs:
-  refresh:
+  rebuild:
     runs-on: ubuntu-latest
     env:
       SNAPTRADE_CLIENT_ID: ${{ secrets.SNAPTRADE_CLIENT_ID }}
@@ -21,6 +21,14 @@ jobs:
       SNAPTRADE_FETCH_START_DATE: "2025-01-01"
       SNAPTRADE_START_DATE: "2026-01-01"
     steps:
+      - name: Guard 10PM ET
+        run: |
+          HOUR="$(TZ=America/New_York date +%H)"
+          if [ "$HOUR" != "22" ]; then
+            echo "Not 10PM ET. Skipping."
+            exit 0
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -30,6 +38,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Rebuild Positions
+        run: npm run rebuild-positions
+
       - name: Rebuild Daily Summary
         run: npm run rebuild-daily-summary
 
@@ -38,3 +49,4 @@ jobs:
 
       - name: Freshness Check
         run: npm run freshness-check
+
