@@ -26,6 +26,13 @@ jobs:
       - name: Guard Market Hours ET (Mon-Fri 9:30-16:15) + After-Hours (20:30, 05:00)
         id: guard
         run: |
+          # If you manually click "Run workflow", always run (don't skip due to time windows).
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           DOW="$(TZ=America/New_York date +%u)"
           HOUR="$(TZ=America/New_York date +%H)"
           MIN="$(TZ=America/New_York date +%M)"
