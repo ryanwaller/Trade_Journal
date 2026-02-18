@@ -1,0 +1,79 @@
+name: Fidelity Feed Monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    env:
+      SNAPTRADE_CLIENT_ID: ${{ secrets.SNAPTRADE_CLIENT_ID }}
+      SNAPTRADE_CONSUMER_KEY: ${{ secrets.SNAPTRADE_CONSUMER_KEY }}
+      SNAPTRADE_USER_ID: ${{ secrets.SNAPTRADE_USER_ID }}
+      SNAPTRADE_USER_SECRET: ${{ secrets.SNAPTRADE_USER_SECRET }}
+      # Update this baseline if you ever want to "reset" what counts as advanced.
+      FIDELITY_BASELINE_TS: "2026-02-13T05:00:00Z"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Check Fidelity Latest Timestamp
+        id: check
+        run: |
+          node scripts/check-fidelity-latest.mjs > fidelity_status.json
+          cat fidelity_status.json
+          echo "advanced=$(node -p \"require('./fidelity_status.json').advanced\")" >> "$GITHUB_OUTPUT"
+          echo "latest=$(node -p \"require('./fidelity_status.json').globalLatestOrderTs || ''\")" >> "$GITHUB_OUTPUT"
+
+      - name: Create Issue If Advanced
+        if: steps.check.outputs.advanced == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const status = JSON.parse(fs.readFileSync("fidelity_status.json", "utf8"));
+            const latest = status.globalLatestOrderTs || "unknown";
+            const title = `Fidelity SnapTrade advanced: ${latest}`;
+
+            // Avoid duplicates if the job reruns.
+            const q = `repo:${context.repo.owner}/${context.repo.repo} is:issue in:title "${title}"`;
+            const existing = await github.rest.search.issuesAndPullRequests({ q, per_page: 5 });
+            if ((existing.data.items || []).length > 0) {
+              core.info(`Issue already exists for ${title}. Skipping.`);
+              return;
+            }
+
+            const lines = [];
+            lines.push(`Baseline: ${status.baselineTs}`);
+            lines.push(`Global latest: ${latest}`);
+            lines.push("");
+            lines.push("Per account:");
+            for (const a of status.accounts || []) {
+              lines.push(`- ${a.accountName || a.accountId}: latest=${a.latestOrderTs} (orders60d=${a.orders60d})`);
+            }
+            lines.push("");
+            lines.push("Next steps:");
+            lines.push("1. Run local refresh:");
+            lines.push("   - `npm run build`");
+            lines.push("   - `node dist/cli.js import-fidelity-api`");
+            lines.push("   - `node dist/cli.js reconcile-open`");
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: lines.join("\n"),
+              labels: ["monitor", "fidelity"]
+            });
+
