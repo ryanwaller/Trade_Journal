@@ -43,8 +43,11 @@ jobs:
               SHOULD_RUN=true
             fi
 
-            # After-hours catch-up runs
-            if { [ "$HOUR" -eq 20 ] && [ "$MIN" -eq 30 ]; } || { [ "$HOUR" -eq 5 ] && [ "$MIN" -eq 00 ]; }; then
+            # After-hours catch-up runs.
+            # GitHub scheduled workflows can start a few minutes late, so allow a small window.
+            # 20:30 ET window: 20:30-20:44
+            # 05:00 ET window: 05:00-05:14
+            if { [ "$HOUR" -eq 20 ] && [ "$MIN" -ge 30 ] && [ "$MIN" -lt 45 ]; } || { [ "$HOUR" -eq 5 ] && [ "$MIN" -ge 0 ] && [ "$MIN" -lt 15 ]; }; then
               SHOULD_RUN=true
               RUN_FULL=true
             fi
