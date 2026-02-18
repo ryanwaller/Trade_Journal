@@ -1,12 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { archiveTradePagesByBrokerPrefix, createPositionPage, updatePositionPage } from "./notion.js";
+import {
+  archiveTradePagesByBrokerPrefix,
+  backfillTradeTypeForBrokerByContractKey,
+  createPositionPage,
+  updatePositionPage
+} from "./notion.js";
 
 type FidelityEvent = {
   date: string;
   account: string;
   broker: string;
   action: "BUY" | "SELL";
+  tradeType: "Stock" | "Call" | "Put" | null;
   symbol: string;
   contractKey: string;
   ticker: string;
@@ -20,6 +26,7 @@ type PositionState = {
   broker: string;
   contractKey: string;
   ticker: string;
+  tradeType: "Stock" | "Call" | "Put" | null;
   qtyOpen: number;
   totalBoughtQty: number;
   avgPrice: number;
@@ -110,6 +117,14 @@ function isOptionSymbol(symbol: string, action: string, description: string): bo
   );
 }
 
+function inferTradeType(symbol: string, action: string, description: string): "Stock" | "Call" | "Put" | null {
+  const upper = `${symbol} ${action} ${description}`.toUpperCase();
+  if (upper.includes(" CALL")) return "Call";
+  if (upper.includes(" PUT")) return "Put";
+  if (isOptionSymbol(symbol, action, description)) return null;
+  return "Stock";
+}
+
 function normalizedAccountFromRaw(account: string): string | null {
   const upper = account.toUpperCase();
   if (upper.includes("FUN")) return "Fun";
@@ -146,6 +161,7 @@ function eventFromRow(row: Record<string, string>, startDate: string): FidelityE
 
   const contractKey = normalizeContractKey(symbolRaw);
   const ticker = extractTicker(actionRaw, description, symbolRaw);
+  const tradeType = inferTradeType(symbolRaw, actionRaw, description);
   const normalizedAccount = normalizedAccountFromRaw(account);
   if (!normalizedAccount) return null;
 
@@ -154,6 +170,7 @@ function eventFromRow(row: Record<string, string>, startDate: string): FidelityE
     account: normalizedAccount,
     broker: "Fidelity",
     action,
+    tradeType,
     symbol: symbolRaw,
     contractKey,
     ticker,
@@ -234,6 +251,7 @@ export async function runImportFidelity() {
         broker: e.broker,
         contractKey: e.contractKey,
         ticker: e.ticker,
+        tradeType: e.tradeType,
         qtyOpen: 0,
         totalBoughtQty: 0,
         avgPrice: 0,
@@ -245,6 +263,7 @@ export async function runImportFidelity() {
       };
       positions.set(key, p);
     }
+    if (!p.tradeType && e.tradeType) p.tradeType = e.tradeType;
 
     if (e.action === "BUY") {
       const newQty = p.qtyOpen + e.qty;
@@ -282,6 +301,7 @@ export async function runImportFidelity() {
       contractKey: p.contractKey,
       qty: p.totalBoughtQty,
       avgPrice: round2(p.avgPrice * multiplier),
+      tradeType: p.tradeType,
       openDate: p.openDate,
       openTime: null,
       broker: p.broker,
@@ -298,6 +318,7 @@ export async function runImportFidelity() {
         contractKey: p.contractKey,
         qty: p.totalBoughtQty,
         avgPrice: round2(p.avgPrice * multiplier),
+        tradeType: p.tradeType,
         status: "CLOSED",
         closeDate: p.closeDate,
         closeTime: null,
@@ -333,5 +354,53 @@ export async function runImportFidelity() {
     createdRows: created,
     openRows: open,
     closedRows: closed
+  };
+}
+
+export async function runBackfillFidelityTradeType() {
+  const root = process.cwd();
+  const rawDir = path.join(root, "imports", "fidelity", "raw");
+  const processedDir = path.join(root, "imports", "fidelity", "processed");
+  const rawFiles = await listCsvFiles(rawDir);
+  const processedFiles = await listCsvFiles(processedDir);
+  const allFiles = [...processedFiles, ...rawFiles];
+
+  const typeByContractKey = new Map<string, "Stock" | "Call" | "Put">();
+  let parsedRows = 0;
+  let parsedEvents = 0;
+  let conflicts = 0;
+
+  for (const file of allFiles) {
+    const content = await fs.readFile(file, "utf8");
+    const rows = parseCsv(content);
+    parsedRows += rows.length;
+    for (const row of rows) {
+      const event = eventFromRow(row, "1900-01-01");
+      if (!event || !event.tradeType) continue;
+      parsedEvents += 1;
+      const key = event.contractKey.toUpperCase();
+      const existing = typeByContractKey.get(key);
+      if (!existing) {
+        typeByContractKey.set(key, event.tradeType);
+        continue;
+      }
+      if (existing !== event.tradeType) conflicts += 1;
+    }
+  }
+
+  const brokerNames = ["Fidelity", "Fidelity (Fun)", "Fidelity (IRA Roth)", "Fidelity (IRA Trad)"];
+  const updates = [];
+  for (const brokerName of brokerNames) {
+    const result = await backfillTradeTypeForBrokerByContractKey(brokerName, typeByContractKey);
+    updates.push(result);
+  }
+
+  return {
+    files: { raw: rawFiles.length, processed: processedFiles.length, total: allFiles.length },
+    parsedRows,
+    parsedEvents,
+    uniqueContractKeys: typeByContractKey.size,
+    conflicts,
+    brokerUpdates: updates
   };
 }
