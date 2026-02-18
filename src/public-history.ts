@@ -2,15 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   archiveTradePagesByBrokerPrefix,
+  backfillTradeTypeForBrokerByContractKey,
   createPositionPage,
+  fetchOpenPositionSnapshotsByBrokers,
   updatePositionPage
 } from "./notion.js";
 
 type PublicHistoryEvent = {
+  dedupeKey: string;
   account: string;
   date: string;
   time: string | null;
   action: "BUY" | "SELL";
+  tradeType: "Stock" | "Call" | "Put" | null;
   contractKey: string;
   ticker: string;
   qty: number;
@@ -22,6 +26,7 @@ type PositionState = {
   account: string;
   contractKey: string;
   ticker: string;
+  tradeType: "Stock" | "Call" | "Put" | null;
   openQty: number;
   avgOpenPrice: number;
   totalOpenedQty: number;
@@ -64,6 +69,15 @@ function toNumber(value: string): number | null {
 
 function round2(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function buildPositionSignature(
+  ticker: string,
+  tradeDate: string,
+  qty: number,
+  fillPrice: number
+) {
+  return `${ticker.toUpperCase()}|${tradeDate}|${round2(qty)}|${round2(fillPrice)}`;
 }
 
 function extractTicker(symbolText: string) {
@@ -117,6 +131,7 @@ function parseLine(line: string): PublicHistoryEvent | null {
   const cusip = cols[sideIndex + 2] ?? "";
   const qtyRaw = cols[sideIndex + 3] ?? "";
   const priceRaw = cols[sideIndex + 4] ?? "";
+  const tradeNumber = (cols[8] ?? "").trim();
 
   if (!accountNumber || !tradeDateRaw || !sideRaw || !symbolText) return null;
 
@@ -135,12 +150,23 @@ function parseLine(line: string): PublicHistoryEvent | null {
 
   const option = isOptionSymbol(symbolText, sideRaw, cusip);
   const contractKey = normalizeContractKey(ticker, cusip, option);
+  const dedupeKey = tradeNumber ? `${accountNumber}|${tradeNumber}` : line.trim();
+  const upperSymbol = symbolText.toUpperCase();
+  const tradeType: "Stock" | "Call" | "Put" | null = option
+    ? upperSymbol.includes(" CALL")
+      ? "Call"
+      : upperSymbol.includes(" PUT")
+        ? "Put"
+        : null
+    : "Stock";
 
   return {
+    dedupeKey,
     account: `Public ${accountNumber}`,
     date,
     time: hhmmssToTime(execTimeRaw),
     action,
+    tradeType,
     contractKey,
     ticker,
     qty,
@@ -250,7 +276,7 @@ export async function runImportPublicHistory() {
 
   const dedupedMap = new Map<string, PublicHistoryEvent>();
   for (const e of events) {
-    const key = `${e.account}|${e.date}|${e.time ?? ""}|${e.action}|${e.contractKey}|${e.qty}|${e.price}`;
+    const key = e.dedupeKey;
     dedupedMap.set(key, e);
   }
   const deduped = Array.from(dedupedMap.values()).sort((a, b) => {
@@ -261,6 +287,10 @@ export async function runImportPublicHistory() {
 
   const archivedHistory = await archiveTradePagesByBrokerPrefix("Public (History)");
   const archivedPdf = await archiveTradePagesByBrokerPrefix("Public (PDF)");
+  const openPublicPositions = await fetchOpenPositionSnapshotsByBrokers(["Public"]);
+  const publicSignatures = new Set(
+    openPublicPositions.map((p) => buildPositionSignature(p.ticker, p.tradeDate, p.qty, p.fillPrice))
+  );
 
   const positions = new Map<string, PositionState>();
   for (const e of deduped) {
@@ -271,6 +301,7 @@ export async function runImportPublicHistory() {
         account: e.account,
         contractKey: e.contractKey,
         ticker: e.ticker,
+        tradeType: e.tradeType,
         openQty: 0,
         avgOpenPrice: 0,
         totalOpenedQty: 0,
@@ -285,25 +316,34 @@ export async function runImportPublicHistory() {
       };
       positions.set(key, p);
     }
+    if (!p.tradeType && e.tradeType) p.tradeType = e.tradeType;
     upsertPositionFromEvent(p, e);
   }
 
   let created = 0;
   let openRows = 0;
   let closedRows = 0;
+  let skippedAsPublicDuplicate = 0;
 
   for (const p of positions.values()) {
     if (p.totalOpenedQty <= 0 || !p.openDate) continue;
     const avgOpenPrice = p.totalOpenedQty > 0 ? p.totalOpenedNotional / p.totalOpenedQty : 0;
     const avgClosePrice = p.totalClosedQty > 0 ? p.totalClosedNotional / p.totalClosedQty : null;
     const multiplier = p.contractKey.startsWith("O") ? 100 : 1;
+    const fillPrice = round2(avgOpenPrice * multiplier);
+    const signature = buildPositionSignature(p.ticker, p.openDate, p.totalOpenedQty, fillPrice);
+    if (publicSignatures.has(signature)) {
+      skippedAsPublicDuplicate += 1;
+      continue;
+    }
 
     const page = await createPositionPage({
       title: p.ticker,
       ticker: p.ticker,
       contractKey: p.contractKey,
       qty: round2(p.totalOpenedQty),
-      avgPrice: round2(avgOpenPrice * multiplier),
+      avgPrice: fillPrice,
+      tradeType: p.tradeType,
       openDate: p.openDate,
       openTime: p.openTime,
       broker: "Public (History)",
@@ -318,6 +358,7 @@ export async function runImportPublicHistory() {
         contractKey: p.contractKey,
         qty: round2(p.totalOpenedQty),
         avgPrice: round2(avgOpenPrice * multiplier),
+        tradeType: p.tradeType,
         status: "CLOSED",
         closeDate: p.closeDate,
         closeTime: p.closeTime,
@@ -340,6 +381,49 @@ export async function runImportPublicHistory() {
     archivedExistingPdfRows: archivedPdf.archived,
     createdRows: created,
     openRows,
-    closedRows
+    closedRows,
+    skippedAsPublicDuplicate
+  };
+}
+
+export async function runBackfillPublicHistoryTradeType() {
+  const defaultFile = path.join(process.cwd(), "imports", "public", "history", "data.txt");
+  const filePath = process.env.PUBLIC_HISTORY_FILE?.trim() || defaultFile;
+
+  const raw = await fs.readFile(filePath, "utf8");
+  const lines = raw.split(/\r?\n/);
+
+  const typeByContractKey = new Map<string, "Stock" | "Call" | "Put">();
+  let parsedEvents = 0;
+  let conflicts = 0;
+
+  for (const line of lines) {
+    if (!line.includes("\t")) continue;
+    if (!line.match(/^\d{2}-[A-Z0-9]+/)) continue;
+    const event = parseLine(line);
+    if (!event || !event.tradeType) continue;
+    parsedEvents += 1;
+    const key = event.contractKey.toUpperCase();
+    const existing = typeByContractKey.get(key);
+    if (!existing) {
+      typeByContractKey.set(key, event.tradeType);
+      continue;
+    }
+    if (existing !== event.tradeType) {
+      conflicts += 1;
+    }
+  }
+
+  const backfill = await backfillTradeTypeForBrokerByContractKey(
+    "Public (History)",
+    typeByContractKey
+  );
+
+  return {
+    filePath,
+    parsedEvents,
+    uniqueContractKeys: typeByContractKey.size,
+    conflicts,
+    ...backfill
   };
 }
