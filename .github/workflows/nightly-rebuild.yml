@@ -20,13 +20,15 @@ jobs:
       SNAPTRADE_INCLUDE_ALL: "1"
       SNAPTRADE_FETCH_START_DATE: "2025-01-01"
       SNAPTRADE_START_DATE: "2025-01-01"
+      SNAPTRADE_FRESHNESS_HOURS: "72"
+      SNAPTRADE_FRESHNESS_FAIL_ON_STALE: "0"
     steps:
-      - name: Guard 10PM ET
+      - name: Guard 10PM/2AM/5AM ET
         id: guard
         run: |
           HOUR="$(TZ=America/New_York date +%H)"
-          if [ "$HOUR" != "22" ]; then
-            echo "Not 10PM ET. Skipping."
+          if [ "$HOUR" != "22" ] && [ "$HOUR" != "02" ] && [ "$HOUR" != "05" ]; then
+            echo "Not 10PM, 2AM, or 5AM ET. Skipping."
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
