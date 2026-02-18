@@ -23,7 +23,7 @@ jobs:
       SNAPTRADE_FRESHNESS_HOURS: "72"
       SNAPTRADE_FRESHNESS_FAIL_ON_STALE: "0"
     steps:
-      - name: Guard Market Hours ET (Mon-Fri 9:30-16:15)
+      - name: Guard Market Hours ET (Mon-Fri 9:30-16:15) + After-Hours (20:30, 05:00)
         id: guard
         run: |
           DOW="$(TZ=America/New_York date +%u)"
@@ -34,12 +34,19 @@ jobs:
           RUN_FULL=false
 
           if [ "$DOW" -ge 1 ] && [ "$DOW" -le 5 ]; then
+            # Market hours
             if [ "$HOUR" -gt 9 ] && [ "$HOUR" -lt 16 ]; then
               SHOULD_RUN=true
             elif [ "$HOUR" -eq 9 ] && [ "$MIN" -ge 30 ]; then
               SHOULD_RUN=true
             elif [ "$HOUR" -eq 16 ] && [ "$MIN" -le 15 ]; then
               SHOULD_RUN=true
+            fi
+
+            # After-hours catch-up runs
+            if { [ "$HOUR" -eq 20 ] && [ "$MIN" -eq 30 ]; } || { [ "$HOUR" -eq 5 ] && [ "$MIN" -eq 00 ]; }; then
+              SHOULD_RUN=true
+              RUN_FULL=true
             fi
           fi
 
