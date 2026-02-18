@@ -37,7 +37,7 @@ function makeKey(broker: string, account: string, contractKey: string) {
 
 function supportedBroker(name: string | null | undefined) {
   const upper = (name ?? "").toUpperCase();
-  return upper === "PUBLIC" || upper === "ROBINHOOD";
+  return upper === "PUBLIC" || upper === "ROBINHOOD" || upper === "FIDELITY";
 }
 
 async function listExistingOpenRows(): Promise<Map<string, ExistingOpenRow>> {
@@ -96,6 +96,7 @@ export async function runSnaptradeReconcileOpen() {
     if (!supportedBroker(broker)) continue;
     const accountName = acct.name ?? "Brokerage Account";
     const firstTradeByContract = new Map<string, { date: string | null; time: string | null }>();
+    const lastBuyByContract = new Map<string, { date: string | null; time: string | null }>();
     try {
       const orders = await getAccountOrders(
         acct.id,
@@ -111,13 +112,16 @@ export async function runSnaptradeReconcileOpen() {
         const side = (o.type ?? "").toUpperCase();
         if (!side.includes("BUY")) continue;
         const key = normalizeContractKey(o.symbol_key ?? o.symbol?.symbol ?? "");
-        if (!key || firstTradeByContract.has(key)) continue;
+        if (!key) continue;
         const dt = o.trade_date ? new Date(o.trade_date) : null;
         if (!dt || Number.isNaN(dt.getTime())) {
-          firstTradeByContract.set(key, { date: null, time: null });
+          if (!firstTradeByContract.has(key)) {
+            firstTradeByContract.set(key, { date: null, time: null });
+          }
+          lastBuyByContract.set(key, { date: null, time: null });
           continue;
         }
-        firstTradeByContract.set(key, {
+        const meta = {
           date: dt.toISOString().slice(0, 10),
           time: new Intl.DateTimeFormat("en-US", {
             timeZone: zone,
@@ -125,7 +129,11 @@ export async function runSnaptradeReconcileOpen() {
             minute: "2-digit",
             hour12: true
           }).format(dt)
-        });
+        };
+        if (!firstTradeByContract.has(key)) {
+          firstTradeByContract.set(key, meta);
+        }
+        lastBuyByContract.set(key, meta);
       }
     } catch {
       // If orders lookup fails, continue with positions snapshot only.
@@ -143,6 +151,9 @@ export async function runSnaptradeReconcileOpen() {
       const avgPrice = Math.round(avgPriceRaw * 100) / 100;
       if (!existingRow) {
         const openMeta = firstTradeByContract.get(normalizeContractKey(p.symbol_key));
+        const lastMeta = lastBuyByContract.get(normalizeContractKey(p.symbol_key));
+        const lastAddDate =
+          openMeta?.date && lastMeta?.date && lastMeta.date !== openMeta.date ? lastMeta.date : null;
         await createPositionPage({
           title: p.ticker,
           ticker: p.ticker,
@@ -151,17 +162,25 @@ export async function runSnaptradeReconcileOpen() {
           avgPrice,
           openDate: openMeta?.date ?? null,
           openTime: openMeta?.time ?? null,
+          lastAddDate,
           broker,
           account: accountName
         });
         created += 1;
       } else {
+        const openMeta = firstTradeByContract.get(normalizeContractKey(p.symbol_key));
+        const lastMeta = lastBuyByContract.get(normalizeContractKey(p.symbol_key));
+        const lastAddDate =
+          openMeta?.date && lastMeta?.date && lastMeta.date !== openMeta.date ? lastMeta.date : null;
         await updatePositionPage({
           pageId: existingRow.pageId,
           ticker: p.ticker,
           contractKey: p.symbol_key,
           qty: p.units,
           avgPrice,
+          // Only set if there's a buy on a later date than the original open date.
+          // If we can't determine this, omit it (don't overwrite a previously-set value).
+          ...(lastAddDate ? { lastAddDate } : {}),
           status: "OPEN"
         });
         updated += 1;

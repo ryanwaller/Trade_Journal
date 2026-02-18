@@ -9,7 +9,33 @@ type DatabaseInfo = {
   titleProperty: string;
 };
 
+type TradeTypeName = "Stock" | "Call" | "Put";
+
 let databaseInfo: DatabaseInfo | null = null;
+
+function inferTradeTypeFromContract(contractKey?: string | null, ticker?: string | null): TradeTypeName | null {
+  const key = (contractKey ?? "").trim().toUpperCase();
+  const t = (ticker ?? "").trim().toUpperCase();
+  if (!key && !t) return null;
+
+  const compact = key.replace(/\s+/g, "");
+  const optionMatch = compact.match(/^([A-Z.\-]+)\d{6}([CP])\d+(?:\.\d+)?$/);
+  if (optionMatch) return optionMatch[2] === "C" ? "Call" : "Put";
+  if (/\bCALL\b/.test(key)) return "Call";
+  if (/\bPUT\b/.test(key)) return "Put";
+
+  if (key && t && key === t) return "Stock";
+  if (key && /^[A-Z.\-]{1,10}$/.test(key)) return "Stock";
+  return null;
+}
+
+function inferTradeTypeFromSnapTradeSymbolKey(symbolKey?: string | null): TradeTypeName | null {
+  const key = (symbolKey ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!key) return null;
+  const m = key.match(/^([A-Z.\-]+)\d{6}([CP])\d+$/);
+  if (!m) return null;
+  return m[2] === "C" ? "Call" : "Put";
+}
 
 export function getNotionClient() {
   assertNotionConfig();
@@ -34,6 +60,7 @@ export const PROPERTY = {
   fees: "Fees",
   tradeDate: "Trade Date",
   tradeTime: "Trade Time",
+  lastAddDate: "Last Add Date",
   closeDate: "Close Date",
   closeTime: "Close Time",
   closePrice: "Close Price",
@@ -143,6 +170,179 @@ export async function findPageIdBySnapTradeId(id: string) {
   return page?.id ?? null;
 }
 
+export type OpenPositionSnapshot = {
+  ticker: string;
+  tradeDate: string;
+  qty: number;
+  fillPrice: number;
+  contractKey: string;
+  broker: string;
+};
+
+export async function fetchOpenPositionSnapshotsByBrokers(
+  brokers: string[]
+): Promise<OpenPositionSnapshot[]> {
+  const brokerSet = new Set(brokers.map((b) => b.trim()).filter(Boolean));
+  if (brokerSet.size === 0) return [];
+
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  const snapshots: OpenPositionSnapshot[] = [];
+  let cursor: string | undefined;
+
+  const filter = {
+    and: [
+      {
+        property: PROPERTY.status,
+        select: { equals: "OPEN" }
+      },
+      ...(info.properties[PROPERTY.rowType]
+        ? [
+            {
+              property: PROPERTY.rowType,
+              select: { equals: "Position" }
+            }
+          ]
+        : [])
+    ]
+  } as any;
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor,
+      filter
+    });
+
+    for (const page of response.results as any[]) {
+      if (page.archived) continue;
+      const broker = getSelectValue(page, PROPERTY.broker);
+      if (!brokerSet.has(broker)) continue;
+
+      const ticker =
+        getRichTextValue(page, PROPERTY.ticker) || getTitleValue(page, info.titleProperty);
+      const tradeDate = getDateValue(page, PROPERTY.tradeDate);
+      const qty = getNumberValue(page, PROPERTY.qty);
+      const fillPrice = getNumberValue(page, PROPERTY.fillPrice);
+      const contractKey = getRichTextValue(page, PROPERTY.contractKey);
+      if (!ticker || !tradeDate || qty === null || fillPrice === null) continue;
+
+      snapshots.push({
+        ticker: ticker.toUpperCase(),
+        tradeDate,
+        qty,
+        fillPrice,
+        contractKey: contractKey.toUpperCase(),
+        broker
+      });
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return snapshots;
+}
+
+export async function fetchTradeSnapshotsByBrokers(
+  brokers: string[]
+): Promise<OpenPositionSnapshot[]> {
+  const brokerSet = new Set(brokers.map((b) => b.trim()).filter(Boolean));
+  if (brokerSet.size === 0) return [];
+
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  const snapshots: OpenPositionSnapshot[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor,
+    });
+
+    for (const page of response.results as any[]) {
+      if (page.archived) continue;
+      const broker = getSelectValue(page, PROPERTY.broker);
+      if (!brokerSet.has(broker)) continue;
+
+      const ticker =
+        getRichTextValue(page, PROPERTY.ticker) || getTitleValue(page, info.titleProperty);
+      const tradeDate = getDateValue(page, PROPERTY.tradeDate);
+      const qty = getNumberValue(page, PROPERTY.qty);
+      const fillPrice = getNumberValue(page, PROPERTY.fillPrice);
+      const contractKey = getRichTextValue(page, PROPERTY.contractKey);
+      if (!ticker || !tradeDate || qty === null || fillPrice === null) continue;
+
+      snapshots.push({
+        ticker: ticker.toUpperCase(),
+        tradeDate,
+        qty,
+        fillPrice,
+        contractKey: contractKey.toUpperCase(),
+        broker
+      });
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return snapshots;
+}
+
+export type TradeIdentityIndex = {
+  snaptradeIds: Set<string>;
+  orderIds: Set<string>;
+  pageIdBySnaptradeId: Map<string, string>;
+  pageIdByOrderId: Map<string, string>;
+};
+
+export async function loadTradeIdentityIndex(): Promise<TradeIdentityIndex> {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  const snaptradeIds = new Set<string>();
+  const orderIds = new Set<string>();
+  const pageIdBySnaptradeId = new Map<string, string>();
+  const pageIdByOrderId = new Map<string, string>();
+  const filter = info.properties[PROPERTY.rowType]
+    ? {
+        property: PROPERTY.rowType,
+        select: { equals: "Trade" }
+      }
+    : undefined;
+
+  let cursor: string | undefined;
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor,
+      ...(filter ? { filter } : {})
+    });
+
+    for (const page of response.results as any[]) {
+      if (page.archived) continue;
+      const snaptradeId = getRichTextValue(page, PROPERTY.snaptradeId);
+      const orderId = getRichTextValue(page, PROPERTY.orderId);
+      if (snaptradeId) {
+        snaptradeIds.add(snaptradeId);
+        pageIdBySnaptradeId.set(snaptradeId, page.id);
+      }
+      if (orderId) {
+        orderIds.add(orderId);
+        pageIdByOrderId.set(orderId, page.id);
+      }
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return {
+    snaptradeIds,
+    orderIds,
+    pageIdBySnaptradeId,
+    pageIdByOrderId
+  };
+}
+
 export async function createTradePage(
   activity: SnapTradeOrder,
   account?: SnapTradeAccount
@@ -155,6 +355,9 @@ export async function createTradePage(
   const fees = activity.fee ?? null;
   const tradeDate = activity.trade_date ?? null;
   const realized = activity.realized_pl ?? null;
+  const inferredTradeType =
+    inferTradeTypeFromSnapTradeSymbolKey(activity.symbol_key) ??
+    inferTradeTypeFromContract(symbol, symbol);
 
   const toLocalDateTime = (iso: string) => {
     const date = new Date(iso);
@@ -229,7 +432,10 @@ export async function createTradePage(
   } else {
     addIfExists(PROPERTY.plAtClose, { number: null });
   }
-  addIfExists(PROPERTY.tradeType, { select: null });
+  addIfExists(
+    PROPERTY.tradeType,
+    inferredTradeType ? { select: { name: inferredTradeType } } : { select: null }
+  );
   addIfExists(PROPERTY.tags, { multi_select: [] });
   addIfExists(
     PROPERTY.broker,
@@ -260,8 +466,11 @@ export async function createPositionPage(params: {
   contractKey: string;
   qty: number;
   avgPrice: number;
+  side?: "BUY" | "SELL" | null;
+  tradeType?: TradeTypeName | null;
   openDate?: string | null;
   openTime?: string | null;
+  lastAddDate?: string | null;
   broker?: string | null;
   account?: string | null;
 }) {
@@ -292,8 +501,21 @@ export async function createPositionPage(params: {
   addIfExists(PROPERTY.status, { select: { name: "OPEN" } });
   addIfExists(PROPERTY.qty, { number: params.qty });
   addIfExists(PROPERTY.fillPrice, { number: params.avgPrice });
+  addIfExists(
+    PROPERTY.side,
+    params.side ? { select: { name: params.side } } : { select: null }
+  );
+  const inferredTradeType =
+    params.tradeType ?? inferTradeTypeFromContract(params.contractKey, params.ticker);
+  addIfExists(
+    PROPERTY.tradeType,
+    inferredTradeType ? { select: { name: inferredTradeType } } : { select: null }
+  );
   if (params.openDate) {
     addIfExists(PROPERTY.tradeDate, { date: { start: params.openDate } });
+  }
+  if (params.lastAddDate) {
+    addIfExists(PROPERTY.lastAddDate, { date: { start: params.lastAddDate } });
   }
   if (params.openTime) {
     addIfExists(PROPERTY.tradeTime, { rich_text: [{ text: { content: params.openTime } }] });
@@ -319,7 +541,10 @@ export async function updatePositionPage(params: {
   contractKey: string;
   qty: number;
   avgPrice: number;
+  side?: "BUY" | "SELL" | null;
+  tradeType?: TradeTypeName | null;
   status: "OPEN" | "CLOSED";
+  lastAddDate?: string | null;
   realizedPl?: number | null;
   closeDate?: string | null;
   closeTime?: string | null;
@@ -351,6 +576,19 @@ export async function updatePositionPage(params: {
   addIfExists(PROPERTY.status, { select: { name: params.status } });
   addIfExists(PROPERTY.qty, { number: params.qty });
   addIfExists(PROPERTY.fillPrice, { number: params.avgPrice });
+  if (params.status === "OPEN" && params.lastAddDate) {
+    addIfExists(PROPERTY.lastAddDate, { date: { start: params.lastAddDate } });
+  }
+  addIfExists(
+    PROPERTY.side,
+    params.side ? { select: { name: params.side } } : { select: null }
+  );
+  const inferredTradeType =
+    params.tradeType ?? inferTradeTypeFromContract(params.contractKey, params.ticker);
+  addIfExists(
+    PROPERTY.tradeType,
+    inferredTradeType ? { select: { name: inferredTradeType } } : { select: null }
+  );
   if (params.status === "CLOSED") {
     if (params.closeDate) {
       addIfExists(PROPERTY.closeDate, { date: { start: params.closeDate } });
@@ -443,11 +681,64 @@ export async function archiveTradePagesByBrokerPrefix(prefix: string) {
       if (rowTypeName !== "Trade" || !brokerName.startsWith(prefix)) {
         continue;
       }
-      await client.pages.update({
-        page_id: (page as any).id,
-        archived: true
-      });
-      archived += 1;
+      try {
+        await client.pages.update({
+          page_id: (page as any).id,
+          archived: true
+        });
+        archived += 1;
+      } catch (err: any) {
+        // Notion may return rows that are already archived in eventual-consistency windows.
+        const msg = String(err?.message ?? "");
+        if (msg.includes("already archived") || msg.includes("is archived")) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return { archived };
+}
+
+export async function archiveTradePagesByExactBroker(brokerNameExact: string) {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  let cursor: string | undefined;
+  let archived = 0;
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor
+    });
+
+    for (const page of response.results) {
+      if ((page as any).archived) continue;
+      const brokerProp = (page as any).properties?.[PROPERTY.broker];
+      const rowTypeProp = (page as any).properties?.[PROPERTY.rowType];
+      const brokerName =
+        brokerProp?.type === "select" ? brokerProp.select?.name ?? "" : "";
+      const rowTypeName =
+        rowTypeProp?.type === "select" ? rowTypeProp.select?.name ?? "" : "";
+      if (rowTypeName !== "Trade" || brokerName !== brokerNameExact) {
+        continue;
+      }
+      try {
+        await client.pages.update({
+          page_id: (page as any).id,
+          archived: true
+        });
+        archived += 1;
+      } catch (err: any) {
+        const msg = String(err?.message ?? "");
+        if (msg.includes("already archived") || msg.includes("is archived")) {
+          continue;
+        }
+        throw err;
+      }
     }
 
     cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
@@ -458,10 +749,18 @@ export async function archiveTradePagesByBrokerPrefix(prefix: string) {
 
 export async function archivePage(pageId: string) {
   const client = getNotionClient();
-  await client.pages.update({
-    page_id: pageId,
-    archived: true
-  });
+  try {
+    await client.pages.update({
+      page_id: pageId,
+      archived: true
+    });
+  } catch (err: any) {
+    const msg = String(err?.message ?? "");
+    if (msg.includes("already archived") || msg.includes("is archived")) {
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function updateTradePage(
@@ -476,6 +775,9 @@ export async function updateTradePage(
   const price = activity.price ?? null;
   const fees = activity.fee ?? null;
   const tradeDate = activity.trade_date ?? null;
+  const inferredTradeType =
+    inferTradeTypeFromSnapTradeSymbolKey(activity.symbol_key) ??
+    inferTradeTypeFromContract(symbol, symbol);
 
   const formatNumber = (value: number | string | null, maxDecimals = 6) => {
     if (value === null) return "";
@@ -554,6 +856,10 @@ export async function updateTradePage(
   addIfExists(
     PROPERTY.orderId,
     activity.order_id ? { rich_text: [{ text: { content: activity.order_id } }] } : { rich_text: [] }
+  );
+  addIfExists(
+    PROPERTY.tradeType,
+    inferredTradeType ? { select: { name: inferredTradeType } } : { select: null }
   );
 
   return getNotionClient().pages.update({
@@ -639,6 +945,140 @@ export async function normalizeFidelityBrokerLabels() {
   } while (cursor);
 
   return { updated };
+}
+
+export async function backfillTradeType() {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  let cursor: string | undefined;
+  let scanned = 0;
+  let updated = 0;
+  let inferredUnknown = 0;
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor
+    });
+
+    for (const page of response.results as any[]) {
+      if (page.archived) continue;
+      scanned += 1;
+
+      const rowType = getSelectValue(page, PROPERTY.rowType);
+      if (rowType && rowType !== "Trade") continue;
+
+      const contractKey = getRichTextValue(page, PROPERTY.contractKey);
+      const ticker =
+        getRichTextValue(page, PROPERTY.ticker) || getTitleValue(page, info.titleProperty);
+      const inferred = inferTradeTypeFromContract(contractKey, ticker);
+      if (!inferred) {
+        inferredUnknown += 1;
+        continue;
+      }
+
+      const current = getSelectValue(page, PROPERTY.tradeType);
+      if (current === inferred) continue;
+      if (!info.properties[PROPERTY.tradeType]) continue;
+
+      await client.pages.update({
+        page_id: page.id,
+        properties: {
+          [PROPERTY.tradeType]: { select: { name: inferred } }
+        }
+      });
+      updated += 1;
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return {
+    scannedRows: scanned,
+    updatedRows: updated,
+    unknownRows: inferredUnknown
+  };
+}
+
+export async function backfillTradeTypeForBrokerByContractKey(
+  brokerName: string,
+  typeByContractKey: Map<string, "Stock" | "Call" | "Put">
+) {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  if (!info.properties[PROPERTY.tradeType]) {
+    return {
+      broker: brokerName,
+      scannedRows: 0,
+      matchedRows: 0,
+      updatedRows: 0,
+      missingTypeRows: 0
+    };
+  }
+
+  let cursor: string | undefined;
+  let scanned = 0;
+  let matched = 0;
+  let updated = 0;
+  let missing = 0;
+
+  const filter = {
+    and: [
+      {
+        property: PROPERTY.broker,
+        select: { equals: brokerName }
+      },
+      ...(info.properties[PROPERTY.rowType]
+        ? [
+            {
+              property: PROPERTY.rowType,
+              select: { equals: "Trade" }
+            }
+          ]
+        : [])
+    ]
+  } as any;
+
+  do {
+    const response = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor,
+      filter
+    });
+
+    for (const page of response.results as any[]) {
+      if (page.archived) continue;
+      scanned += 1;
+      const contractKey = getRichTextValue(page, PROPERTY.contractKey).toUpperCase();
+      if (!contractKey) continue;
+      const inferred = typeByContractKey.get(contractKey);
+      if (!inferred) {
+        missing += 1;
+        continue;
+      }
+      matched += 1;
+      const current = getSelectValue(page, PROPERTY.tradeType);
+      if (current === inferred) continue;
+
+      await client.pages.update({
+        page_id: page.id,
+        properties: {
+          [PROPERTY.tradeType]: { select: { name: inferred } }
+        }
+      });
+      updated += 1;
+    }
+
+    cursor = response.has_more ? response.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return {
+    broker: brokerName,
+    scannedRows: scanned,
+    matchedRows: matched,
+    updatedRows: updated,
+    missingTypeRows: missing
+  };
 }
 
 type AuditItem = {

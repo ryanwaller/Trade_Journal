@@ -313,7 +313,7 @@ export async function getAccountOrdersChunked(
   startDate: string,
   endDate: string,
   includeAll = false,
-  chunkDays = 90
+  _chunkDays = 90
 ): Promise<SnapTradeOrder[]> {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -321,24 +321,17 @@ export async function getAccountOrdersChunked(
     throw new Error("Invalid start or end date for chunked fetch");
   }
 
-  const results: SnapTradeOrder[] = [];
-  let cursor = new Date(start);
-
-  while (cursor <= end) {
-    const chunkStart = new Date(cursor);
-    const chunkEnd = new Date(cursor);
-    chunkEnd.setDate(chunkEnd.getDate() + chunkDays - 1);
-    if (chunkEnd > end) {
-      chunkEnd.setTime(end.getTime());
-    }
-
-    const ms = chunkEnd.getTime() - chunkStart.getTime();
-    const days = Math.max(1, Math.ceil(ms / (1000 * 60 * 60 * 24)));
-    const chunkOrders = await getAccountOrders(accountId, days, includeAll);
-    results.push(...chunkOrders);
-
-    cursor.setDate(cursor.getDate() + chunkDays);
-  }
+  const endExclusive = new Date(end);
+  endExclusive.setDate(endExclusive.getDate() + 1);
+  const ms = endExclusive.getTime() - start.getTime();
+  const days = Math.max(1, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+  const orders = await getAccountOrders(accountId, days, includeAll);
+  const results = orders.filter((order) => {
+    if (!order.trade_date) return false;
+    const tradeMs = new Date(order.trade_date).getTime();
+    if (Number.isNaN(tradeMs)) return false;
+    return tradeMs >= start.getTime() && tradeMs < endExclusive.getTime();
+  });
 
   const uniq = new Map<string, SnapTradeOrder>();
   for (const order of results) {
@@ -361,11 +354,14 @@ export async function registerUser(userId: string) {
 }
 
 export async function getLoginUrl(userId: string, userSecret: string, redirectURI?: string) {
-  const response = await snaptrade.authentication.loginSnapTradeUser({
+  const request: any = {
     userId,
-    userSecret,
-    redirectURI
-  });
+    userSecret
+  };
+  if (redirectURI) {
+    request.redirectURI = redirectURI;
+  }
+  const response = await snaptrade.authentication.loginSnapTradeUser(request);
   const data = (response as any).data ?? response;
   return data;
 }
