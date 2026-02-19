@@ -46,9 +46,17 @@ jobs:
       - run: npm ci
         if: steps.guard.outputs.should_run == 'true'
 
-      - name: Rebuild Positions
+      - name: Import Public API
         if: steps.guard.outputs.should_run == 'true'
-        run: npm run rebuild-positions
+        run: npm run import-public-api
+
+      - name: Import Robinhood API
+        if: steps.guard.outputs.should_run == 'true'
+        run: npm run import-robinhood-api
+
+      - name: Import Fidelity API
+        if: steps.guard.outputs.should_run == 'true'
+        run: npm run import-fidelity-api
 
       - name: Reconcile Open Positions
         if: steps.guard.outputs.should_run == 'true'

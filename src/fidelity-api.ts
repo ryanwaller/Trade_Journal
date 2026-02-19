@@ -2,6 +2,8 @@ import { config, assertSyncConfig } from "./config.js";
 import {
   archiveTradePagesByExactBroker,
   createPositionPage,
+  loadManualStrategyTagsIndexForBroker,
+  manualKeyForPosition,
   updatePositionPage
 } from "./notion.js";
 import { getAccountOrdersChunked, getAccountPositions, listAccounts } from "./snaptrade.js";
@@ -47,6 +49,8 @@ export async function runImportFidelityApi() {
   const { startDate, endDate } = resolveFidelityApiRange();
   const accounts = await listAccounts();
   const fidelityAccounts = accounts.filter((a) => (a.brokerage ?? "").toUpperCase() === "FIDELITY");
+
+  const manualIndex = await loadManualStrategyTagsIndexForBroker("Fidelity");
 
   const archivedExisting = await archiveTradePagesByExactBroker("Fidelity");
 
@@ -106,6 +110,8 @@ export async function runImportFidelityApi() {
                 hour12: true
               }).format(openDateTime)
             : null;
+          const accountName = account.name ?? "Brokerage Account";
+          const manual = manualIndex.get(manualKeyForPosition(accountName, contractKey, openDate));
           const page = await createPositionPage({
             title: ticker,
             ticker,
@@ -115,7 +121,9 @@ export async function runImportFidelityApi() {
             openDate,
             openTime,
             broker: "Fidelity",
-            account: account.name ?? "Brokerage Account"
+            account: accountName,
+            strategy: manual?.strategy ?? undefined,
+            tags: manual?.tags ?? undefined
           });
           positions.set(key, {
             pageId: (page as any).id,
@@ -204,6 +212,8 @@ export async function runImportFidelityApi() {
       const avgPrice = Math.round(avgPriceRaw * 100) / 100;
       const existing = positions.get(key);
       if (!existing) {
+        const accountName = account.name ?? "Brokerage Account";
+        const manual = manualIndex.get(manualKeyForPosition(accountName, p.symbol_key, null));
         await createPositionPage({
           title: p.ticker,
           ticker: p.ticker,
@@ -211,7 +221,9 @@ export async function runImportFidelityApi() {
           qty: p.units,
           avgPrice,
           broker: "Fidelity",
-          account: account.name ?? "Brokerage Account"
+          account: accountName,
+          strategy: manual?.strategy ?? undefined,
+          tags: manual?.tags ?? undefined
         });
         created += 1;
         ensuredOpenFromSnapshot += 1;

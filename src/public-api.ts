@@ -3,6 +3,8 @@ import {
   archivePage,
   archiveTradePagesByExactBroker,
   createPositionPage,
+  loadManualStrategyTagsIndexForBroker,
+  manualKeyForPosition,
   updatePositionPage
 } from "./notion.js";
 import { getAccountOrdersChunked, getAccountPositions, listAccounts } from "./snaptrade.js";
@@ -48,6 +50,9 @@ export async function runImportPublicApi() {
   const { startDate, endDate } = resolvePublicApiRange();
   const accounts = await listAccounts();
   const publicAccounts = accounts.filter((a) => (a.brokerage ?? "").toUpperCase() === "PUBLIC");
+
+  // Preserve user-owned fields (Strategy/Tags) across rebuilds.
+  const manualIndex = await loadManualStrategyTagsIndexForBroker("Public");
 
   const archivedExisting = await archiveTradePagesByExactBroker("Public");
 
@@ -108,6 +113,8 @@ export async function runImportPublicApi() {
                 hour12: true
               }).format(openDateTime)
             : null;
+          const accountName = account.name ?? "Brokerage Account";
+          const manual = manualIndex.get(manualKeyForPosition(accountName, contractKey, openDate));
           const page = await createPositionPage({
             title: ticker,
             ticker,
@@ -117,7 +124,9 @@ export async function runImportPublicApi() {
             openDate,
             openTime,
             broker: "Public",
-            account: account.name ?? "Brokerage Account"
+            account: accountName,
+            strategy: manual?.strategy ?? undefined,
+            tags: manual?.tags ?? undefined
           });
           positions.set(key, {
             pageId: (page as any).id,
@@ -208,6 +217,8 @@ export async function runImportPublicApi() {
       const avgPrice = Math.round(avgPriceRaw * 100) / 100;
       const existing = positions.get(key);
       if (!existing) {
+        const accountName = account.name ?? "Brokerage Account";
+        const manual = manualIndex.get(manualKeyForPosition(accountName, p.symbol_key, null));
         await createPositionPage({
           title: p.ticker,
           ticker: p.ticker,
@@ -215,7 +226,9 @@ export async function runImportPublicApi() {
           qty: p.units,
           avgPrice,
           broker: "Public",
-          account: account.name ?? "Brokerage Account"
+          account: accountName,
+          strategy: manual?.strategy ?? undefined,
+          tags: manual?.tags ?? undefined
         });
         created += 1;
         ensuredOpenFromSnapshot += 1;

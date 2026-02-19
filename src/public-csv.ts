@@ -4,6 +4,8 @@ import {
   archiveTradePagesByBrokerPrefix,
   createPositionPage,
   fetchTradeSnapshotsByBrokers,
+  loadManualStrategyTagsIndexForBroker,
+  manualKeyForPosition,
   updatePositionPage
 } from "./notion.js";
 
@@ -406,6 +408,7 @@ export async function runImportPublicCsv() {
   });
 
   const archivedExisting = await archiveTradePagesByBrokerPrefix("Public (CSV)");
+  const manualIndex = await loadManualStrategyTagsIndexForBroker("Public (CSV)");
   const snaptradeRows = await fetchTradeSnapshotsByBrokers(["Public"]);
   const snaptradeContractKeys = new Set(
     snaptradeRows
@@ -495,6 +498,7 @@ export async function runImportPublicCsv() {
       continue;
     }
 
+    const manual = manualIndex.get(manualKeyForPosition(p.account, p.contractKey, p.openDate));
     const page = await createPositionPage({
       title: p.ticker,
       ticker: p.ticker,
@@ -505,7 +509,9 @@ export async function runImportPublicCsv() {
       openDate: p.openDate,
       openTime: null,
       broker: "Public (CSV)",
-      account: p.account
+      account: p.account,
+      strategy: manual?.strategy ?? undefined,
+      tags: manual?.tags ?? undefined
     });
     createdRows += 1;
 

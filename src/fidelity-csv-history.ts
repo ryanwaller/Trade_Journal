@@ -3,6 +3,8 @@ import path from "node:path";
 import {
   archiveTradePagesByExactBroker,
   createPositionPage,
+  loadManualStrategyTagsIndexForBroker,
+  manualKeyForPosition,
   updatePositionPage
 } from "./notion.js";
 
@@ -239,6 +241,7 @@ export async function runImportFidelityCsvHistory() {
   });
 
   const archivedExisting = await archiveTradePagesByExactBroker("Fidelity (CSV)");
+  const manualIndex = await loadManualStrategyTagsIndexForBroker("Fidelity (CSV)");
 
   const positions = new Map<string, PositionState>();
   for (const e of events) {
@@ -292,6 +295,7 @@ export async function runImportFidelityCsvHistory() {
   for (const p of positions.values()) {
     if (p.totalBoughtQty <= 0 || !p.openDate) continue;
     const multiplier = /^\w+\d{6}[CP]/i.test(p.contractKey) ? 100 : 1;
+    const manual = manualIndex.get(manualKeyForPosition(p.account, p.contractKey, p.openDate));
     const page = await createPositionPage({
       title: p.ticker,
       ticker: p.ticker,
@@ -302,7 +306,9 @@ export async function runImportFidelityCsvHistory() {
       openDate: p.openDate,
       openTime: null,
       broker: p.broker,
-      account: p.account
+      account: p.account,
+      strategy: manual?.strategy ?? undefined,
+      tags: manual?.tags ?? undefined
     });
     created += 1;
 

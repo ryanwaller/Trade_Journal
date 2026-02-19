@@ -2,6 +2,8 @@ import { config, assertSyncConfig } from "./config.js";
 import {
   archiveTradePagesByExactBroker,
   createPositionPage,
+  loadManualStrategyTagsIndexForBroker,
+  manualKeyForPosition,
   updatePositionPage
 } from "./notion.js";
 import { getAccountOrdersChunked, getAccountPositions, listAccounts } from "./snaptrade.js";
@@ -49,6 +51,8 @@ export async function runImportRobinhoodApi() {
   const robinhoodAccounts = accounts.filter(
     (a) => (a.brokerage ?? "").toUpperCase() === "ROBINHOOD"
   );
+
+  const manualIndex = await loadManualStrategyTagsIndexForBroker("Robinhood");
 
   const archivedExisting = await archiveTradePagesByExactBroker("Robinhood");
 
@@ -108,6 +112,8 @@ export async function runImportRobinhoodApi() {
                 hour12: true
               }).format(openDateTime)
             : null;
+          const accountName = account.name ?? "Brokerage Account";
+          const manual = manualIndex.get(manualKeyForPosition(accountName, contractKey, openDate));
           const page = await createPositionPage({
             title: ticker,
             ticker,
@@ -117,7 +123,9 @@ export async function runImportRobinhoodApi() {
             openDate,
             openTime,
             broker: "Robinhood",
-            account: account.name ?? "Brokerage Account"
+            account: accountName,
+            strategy: manual?.strategy ?? undefined,
+            tags: manual?.tags ?? undefined
           });
           positions.set(key, {
             pageId: (page as any).id,
@@ -208,6 +216,8 @@ export async function runImportRobinhoodApi() {
       const avgPrice = Math.round(avgPriceRaw * 100) / 100;
       const existing = positions.get(key);
       if (!existing) {
+        const accountName = account.name ?? "Brokerage Account";
+        const manual = manualIndex.get(manualKeyForPosition(accountName, p.symbol_key, null));
         await createPositionPage({
           title: p.ticker,
           ticker: p.ticker,
@@ -215,7 +225,9 @@ export async function runImportRobinhoodApi() {
           qty: p.units,
           avgPrice,
           broker: "Robinhood",
-          account: account.name ?? "Brokerage Account"
+          account: accountName,
+          strategy: manual?.strategy ?? undefined,
+          tags: manual?.tags ?? undefined
         });
         created += 1;
         ensuredOpenFromSnapshot += 1;

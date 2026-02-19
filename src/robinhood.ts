@@ -3,6 +3,8 @@ import path from "node:path";
 import {
   archiveTradePagesByBrokerPrefix,
   createPositionPage,
+  loadManualStrategyTagsIndexForBroker,
+  manualKeyForPosition,
   updatePositionPage
 } from "./notion.js";
 
@@ -390,6 +392,7 @@ export async function runImportRobinhood() {
   });
 
   const archivedExisting = await archiveTradePagesByBrokerPrefix("Robinhood (CSV)");
+  const manualIndex = await loadManualStrategyTagsIndexForBroker("Robinhood (CSV)");
 
   const positions = new Map<string, PositionState>();
   for (const e of events) {
@@ -434,6 +437,7 @@ export async function runImportRobinhood() {
       : "Stock";
     const side = inferPositionSide(p);
 
+    const manual = manualIndex.get(manualKeyForPosition(p.account, p.contractKey, p.openDate));
     const page = await createPositionPage({
       title: p.ticker,
       ticker: p.ticker,
@@ -445,7 +449,9 @@ export async function runImportRobinhood() {
       openDate: p.openDate,
       openTime: null,
       broker: "Robinhood (CSV)",
-      account: p.account
+      account: p.account,
+      strategy: manual?.strategy ?? undefined,
+      tags: manual?.tags ?? undefined
     });
     createdRows += 1;
 

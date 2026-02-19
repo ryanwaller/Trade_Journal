@@ -471,6 +471,9 @@ export async function createPositionPage(params: {
   openDate?: string | null;
   openTime?: string | null;
   lastAddDate?: string | null;
+  // Manual fields (user-owned). We only set them at creation time.
+  strategy?: string | null;
+  tags?: string[] | null;
   broker?: string | null;
   account?: string | null;
 }) {
@@ -501,6 +504,20 @@ export async function createPositionPage(params: {
   addIfExists(PROPERTY.status, { select: { name: "OPEN" } });
   addIfExists(PROPERTY.qty, { number: params.qty });
   addIfExists(PROPERTY.fillPrice, { number: params.avgPrice });
+  if (params.strategy !== undefined) {
+    addIfExists(
+      PROPERTY.strategy,
+      params.strategy ? { select: { name: params.strategy } } : { select: null }
+    );
+  }
+  if (params.tags !== undefined) {
+    addIfExists(
+      PROPERTY.tags,
+      params.tags && params.tags.length > 0
+        ? { multi_select: params.tags.map((name) => ({ name })) }
+        : { multi_select: [] }
+    );
+  }
   addIfExists(
     PROPERTY.side,
     params.side ? { select: { name: params.side } } : { select: null }
@@ -533,6 +550,71 @@ export async function createPositionPage(params: {
     parent: { database_id: info.databaseId },
     properties
   });
+}
+
+type ManualStrategyTags = {
+  strategy: string | null;
+  tags: string[];
+};
+
+function normalizeManualKeyPart(value: string) {
+  return value.trim().replace(/\s+/g, "").toUpperCase();
+}
+
+export function manualKeyForPosition(account: string, contractKey: string, openDate: string | null) {
+  return `${normalizeManualKeyPart(account)}|${normalizeManualKeyPart(contractKey)}|${openDate ?? ""}`;
+}
+
+export async function loadManualStrategyTagsIndexForBroker(
+  brokerNameExact: string
+): Promise<Map<string, ManualStrategyTags>> {
+  const info = await getJournalInfo();
+  const client = getNotionClient();
+  const index = new Map<string, ManualStrategyTags>();
+  let cursor: string | undefined;
+
+  const filter: any = {
+    and: [
+      { property: PROPERTY.broker, select: { equals: brokerNameExact } },
+      ...(info.properties[PROPERTY.rowType]
+        ? [{ property: PROPERTY.rowType, select: { equals: "Trade" } }]
+        : [])
+    ]
+  };
+
+  do {
+    const res = await client.databases.query({
+      database_id: info.databaseId,
+      start_cursor: cursor,
+      filter
+    });
+
+    for (const page of res.results as any[]) {
+      if (page.archived) continue;
+      const account = getRichTextValue(page, PROPERTY.account);
+      const contractKey = getRichTextValue(page, PROPERTY.contractKey);
+      const openDate = getDateValue(page, PROPERTY.tradeDate) || null;
+      if (!account || !contractKey) continue;
+
+      const strategyProp = page.properties?.[PROPERTY.strategy];
+      const tagsProp = page.properties?.[PROPERTY.tags];
+      const strategy =
+        strategyProp?.type === "select" ? strategyProp.select?.name ?? null : null;
+      const tags =
+        tagsProp?.type === "multi_select"
+          ? (tagsProp.multi_select ?? []).map((t: any) => t?.name).filter(Boolean)
+          : [];
+
+      // Only store if user actually set something.
+      if (!strategy && tags.length === 0) continue;
+
+      index.set(manualKeyForPosition(account, contractKey, openDate), { strategy, tags });
+    }
+
+    cursor = res.has_more ? res.next_cursor ?? undefined : undefined;
+  } while (cursor);
+
+  return index;
 }
 
 export async function updatePositionPage(params: {
