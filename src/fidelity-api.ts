@@ -3,7 +3,7 @@ import {
   archiveTradePagesByExactBroker,
   createPositionPage,
   loadManualStrategyTagsIndexForBroker,
-  manualKeyForPosition,
+  lookupManualStrategyTags,
   updatePositionPage
 } from "./notion.js";
 import { getAccountOrdersChunked, getAccountPositions, listAccounts } from "./snaptrade.js";
@@ -111,7 +111,7 @@ export async function runImportFidelityApi() {
               }).format(openDateTime)
             : null;
           const accountName = account.name ?? "Brokerage Account";
-          const manual = manualIndex.get(manualKeyForPosition(accountName, contractKey, openDate));
+          const manual = lookupManualStrategyTags(manualIndex, accountName, contractKey, openDate);
           const page = await createPositionPage({
             title: ticker,
             ticker,
@@ -213,7 +213,7 @@ export async function runImportFidelityApi() {
       const existing = positions.get(key);
       if (!existing) {
         const accountName = account.name ?? "Brokerage Account";
-        const manual = manualIndex.get(manualKeyForPosition(accountName, p.symbol_key, null));
+        const manual = lookupManualStrategyTags(manualIndex, accountName, p.symbol_key, null);
         await createPositionPage({
           title: p.ticker,
           ticker: p.ticker,

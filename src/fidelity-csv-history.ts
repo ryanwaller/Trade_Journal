@@ -4,7 +4,7 @@ import {
   archiveTradePagesByExactBroker,
   createPositionPage,
   loadManualStrategyTagsIndexForBroker,
-  manualKeyForPosition,
+  lookupManualStrategyTags,
   updatePositionPage
 } from "./notion.js";
 
@@ -295,7 +295,7 @@ export async function runImportFidelityCsvHistory() {
   for (const p of positions.values()) {
     if (p.totalBoughtQty <= 0 || !p.openDate) continue;
     const multiplier = /^\w+\d{6}[CP]/i.test(p.contractKey) ? 100 : 1;
-    const manual = manualIndex.get(manualKeyForPosition(p.account, p.contractKey, p.openDate));
+    const manual = lookupManualStrategyTags(manualIndex, p.account, p.contractKey, p.openDate);
     const page = await createPositionPage({
       title: p.ticker,
       ticker: p.ticker,

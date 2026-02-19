@@ -565,6 +565,30 @@ export function manualKeyForPosition(account: string, contractKey: string, openD
   return `${normalizeManualKeyPart(account)}|${normalizeManualKeyPart(contractKey)}|${openDate ?? ""}`;
 }
 
+export function manualKeyForPositionLoose(account: string, contractKey: string) {
+  return `LOOSE|${normalizeManualKeyPart(account)}|${normalizeManualKeyPart(contractKey)}`;
+}
+
+function mergeManual(a: ManualStrategyTags, b: ManualStrategyTags): ManualStrategyTags {
+  const tags = Array.from(new Set([...(a.tags ?? []), ...(b.tags ?? [])]));
+  return {
+    strategy: a.strategy ?? b.strategy ?? null,
+    tags
+  };
+}
+
+export function lookupManualStrategyTags(
+  index: Map<string, ManualStrategyTags>,
+  account: string,
+  contractKey: string,
+  openDate: string | null
+): ManualStrategyTags | null {
+  const exact = index.get(manualKeyForPosition(account, contractKey, openDate));
+  if (exact) return exact;
+  const loose = index.get(manualKeyForPositionLoose(account, contractKey));
+  return loose ?? null;
+}
+
 export async function loadManualStrategyTagsIndexForBroker(
   brokerNameExact: string
 ): Promise<Map<string, ManualStrategyTags>> {
@@ -608,7 +632,16 @@ export async function loadManualStrategyTagsIndexForBroker(
       // Only store if user actually set something.
       if (!strategy && tags.length === 0) continue;
 
-      index.set(manualKeyForPosition(account, contractKey, openDate), { strategy, tags });
+      const value = { strategy, tags } satisfies ManualStrategyTags;
+
+      const exactKey = manualKeyForPosition(account, contractKey, openDate);
+      const prevExact = index.get(exactKey);
+      index.set(exactKey, prevExact ? mergeManual(prevExact, value) : value);
+
+      // Also store a loose key for cases where the importer can't determine openDate.
+      const looseKey = manualKeyForPositionLoose(account, contractKey);
+      const prevLoose = index.get(looseKey);
+      index.set(looseKey, prevLoose ? mergeManual(prevLoose, value) : value);
     }
 
     cursor = res.has_more ? res.next_cursor ?? undefined : undefined;

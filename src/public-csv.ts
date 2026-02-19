@@ -5,7 +5,7 @@ import {
   createPositionPage,
   fetchTradeSnapshotsByBrokers,
   loadManualStrategyTagsIndexForBroker,
-  manualKeyForPosition,
+  lookupManualStrategyTags,
   updatePositionPage
 } from "./notion.js";
 
@@ -498,7 +498,7 @@ export async function runImportPublicCsv() {
       continue;
     }
 
-    const manual = manualIndex.get(manualKeyForPosition(p.account, p.contractKey, p.openDate));
+    const manual = lookupManualStrategyTags(manualIndex, p.account, p.contractKey, p.openDate);
     const page = await createPositionPage({
       title: p.ticker,
       ticker: p.ticker,
