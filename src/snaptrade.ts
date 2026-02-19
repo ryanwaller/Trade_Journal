@@ -131,11 +131,6 @@ export async function getAccountOrders(
       resolvedSymbol ??
       null;
 
-    const normalizeSymbolKey = (value: string | null) => {
-      if (!value) return null;
-      return value.trim().replace(/\s+/g, " ").toUpperCase();
-    };
-
     const symbolKey = normalizeSymbolKey(rawSymbolKey);
 
     const executionPrice = toNumber(order.execution_price);
@@ -183,9 +178,23 @@ function normalizeSymbolKey(value: string | null | undefined) {
   const trimmed = value.trim().replace(/^[-+]/, "");
   if (!trimmed) return null;
   const compact = trimmed.replace(/\s+/g, "").toUpperCase();
-  const m = compact.match(/^([A-Z.\-]+)(\d{6}[CP]\d+)$/);
+
+  // Canonicalize options keys so "SPY260320C684" and "SPY 260320C00684000" become the same string.
+  // Format: TICKER<YYMMDD><C|P><STRIKE>, where STRIKE is 8 digits (strike * 1000).
+  //
+  // Heuristic: if strike digits are <= 3, treat as whole strike dollars and append "000" (x1000).
+  // This matches common "C684" shorthand -> "C00684000".
+  const m = compact.match(/^([A-Z.\-]+)(\d{6})([CP])(\d+)$/);
   if (!m) return compact;
-  return `${m[1]} ${m[2]}`;
+
+  const [, ticker, yymmdd, cp, strikeRaw] = m;
+  let strikeDigits = strikeRaw;
+  if (strikeDigits.length <= 3) strikeDigits = `${strikeDigits}000`;
+  if (strikeDigits.length < 8) strikeDigits = strikeDigits.padStart(8, "0");
+  // If it's longer than 8, keep the rightmost 8 (best-effort; avoids blowing up on unexpected formats).
+  if (strikeDigits.length > 8) strikeDigits = strikeDigits.slice(-8);
+
+  return `${ticker} ${yymmdd}${cp}${strikeDigits}`;
 }
 
 function extractTickerFromSymbolKey(symbolKey: string) {
