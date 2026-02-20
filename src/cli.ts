@@ -18,6 +18,7 @@ import { runImportFidelityCsvHistory } from "./fidelity-csv-history.js";
 import { runBackfillFidelityOpenDates } from "./fidelity-open-date-backfill.js";
 import { runReconcileFidelityCsv } from "./fidelity-csv-reconcile.js";
 import { runImportFidelityPositions } from "./fidelity-positions.js";
+import { runReconcileFidelityHybrid } from "./fidelity-hybrid-reconcile.js";
 import { runSnaptradeReconcileOpen } from "./snaptrade-reconcile.js";
 import { runImportPublicPdf } from "./public-pdf.js";
 import { runBackfillPublicHistoryTradeType, runImportPublicHistory } from "./public-history.js";
@@ -124,6 +125,12 @@ async function run() {
 
   if (command === "reconcile-fidelity-csv") {
     const result = await runReconcileFidelityCsv();
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (command === "reconcile-fidelity-hybrid") {
+    const result = await runReconcileFidelityHybrid();
     console.log(JSON.stringify(result, null, 2));
     return;
   }

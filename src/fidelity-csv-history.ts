@@ -307,7 +307,7 @@ export async function runImportFidelityCsvHistory() {
       openTime: null,
       broker: p.broker,
       account: p.account,
-      strategy: manual?.strategy ?? undefined,
+      strategies: manual?.strategies ?? undefined,
       tags: manual?.tags ?? undefined
     });
     created += 1;

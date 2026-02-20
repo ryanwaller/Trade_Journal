@@ -450,7 +450,7 @@ export async function runImportRobinhood() {
       openTime: null,
       broker: "Robinhood (CSV)",
       account: p.account,
-      strategy: manual?.strategy ?? undefined,
+      strategies: manual?.strategies ?? undefined,
       tags: manual?.tags ?? undefined
     });
     createdRows += 1;

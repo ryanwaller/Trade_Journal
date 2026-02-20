@@ -13,6 +13,39 @@ type TradeTypeName = "Stock" | "Call" | "Put";
 
 let databaseInfo: DatabaseInfo | null = null;
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableNotionError(err: any) {
+  const code = String(err?.code ?? "");
+  const status = typeof err?.status === "number" ? err.status : null;
+  if (code === "notionhq_client_request_timeout") return true;
+  // Transient upstream / rate limiting issues.
+  if (status && [429, 500, 502, 503, 504].includes(status)) return true;
+  return false;
+}
+
+async function withNotionRetry<T>(label: string, fn: () => Promise<T>, attempts = 5): Promise<T> {
+  let delayMs = 1000;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (i === attempts || !isRetryableNotionError(err)) {
+        throw err;
+      }
+      const code = String(err?.code ?? "");
+      const status = typeof err?.status === "number" ? err.status : null;
+      console.warn(`[notion-retry] ${label} failed (attempt ${i}/${attempts})`, { code, status });
+      await sleep(delayMs);
+      delayMs = Math.min(15000, Math.round(delayMs * 1.8));
+    }
+  }
+  // Unreachable, but TS likes a return.
+  throw new Error(`withNotionRetry exhausted for ${label}`);
+}
+
 function inferTradeTypeFromContract(contractKey?: string | null, ticker?: string | null): TradeTypeName | null {
   const key = (contractKey ?? "").trim().toUpperCase();
   const t = (ticker ?? "").trim().toUpperCase();
@@ -40,7 +73,10 @@ function inferTradeTypeFromSnapTradeSymbolKey(symbolKey?: string | null): TradeT
 export function getNotionClient() {
   assertNotionConfig();
   if (!notion) {
-    notion = new Client({ auth: config.NOTION_TOKEN });
+    const timeoutMsRaw = process.env.NOTION_TIMEOUT_MS?.trim();
+    const timeoutMsParsed = timeoutMsRaw ? Number.parseInt(timeoutMsRaw, 10) : NaN;
+    const timeoutMs = Number.isFinite(timeoutMsParsed) ? timeoutMsParsed : 120_000;
+    notion = new Client({ auth: config.NOTION_TOKEN, timeoutMs });
   }
   return notion;
 }
@@ -85,9 +121,11 @@ export async function getJournalInfo(): Promise<DatabaseInfo> {
     throw new Error("NOTION_DATABASE_ID must be set");
   }
 
-  const db = (await getNotionClient().databases.retrieve({
-    database_id: config.NOTION_DATABASE_ID
-  })) as any;
+  const db = (await withNotionRetry("databases.retrieve", () =>
+    getNotionClient().databases.retrieve({
+      database_id: config.NOTION_DATABASE_ID!
+    })
+  )) as any;
 
   const titleProperty =
     Object.entries(db.properties ?? {}).find(([, value]: any) => value?.type === "title")?.[0] ??
@@ -104,30 +142,34 @@ export async function getJournalInfo(): Promise<DatabaseInfo> {
 
 export async function findExistingBySnapTradeId(id: string) {
   const info = await getJournalInfo();
-  const response = await getNotionClient().databases.query({
-    database_id: info.databaseId,
-    filter: {
-      property: PROPERTY.snaptradeId,
-      rich_text: {
-        equals: id
+  const response = await withNotionRetry("databases.query(findExistingBySnapTradeId)", () =>
+    getNotionClient().databases.query({
+      database_id: info.databaseId,
+      filter: {
+        property: PROPERTY.snaptradeId,
+        rich_text: {
+          equals: id
+        }
       }
-    }
-  });
+    })
+  );
 
   return response.results.length > 0;
 }
 
 export async function findPageIdByOrderId(orderId: string) {
   const info = await getJournalInfo();
-  const response = await getNotionClient().databases.query({
-    database_id: info.databaseId,
-    filter: {
-      property: PROPERTY.orderId,
-      rich_text: {
-        equals: orderId
+  const response = await withNotionRetry("databases.query(findPageIdByOrderId)", () =>
+    getNotionClient().databases.query({
+      database_id: info.databaseId,
+      filter: {
+        property: PROPERTY.orderId,
+        rich_text: {
+          equals: orderId
+        }
       }
-    }
-  });
+    })
+  );
 
   const page = response.results[0] as any;
   return page?.id ?? null;
@@ -135,36 +177,40 @@ export async function findPageIdByOrderId(orderId: string) {
 
 export async function findOpenPositionPageId(contractKey: string) {
   const info = await getJournalInfo();
-  const response = await getNotionClient().databases.query({
-    database_id: info.databaseId,
-    filter: {
-      and: [
-        {
-          property: PROPERTY.contractKey,
-          rich_text: { equals: contractKey }
-        },
-        {
-          property: PROPERTY.status,
-          select: { equals: "OPEN" }
-        }
-      ]
-    }
-  });
+  const response = await withNotionRetry("databases.query(findOpenPositionPageId)", () =>
+    getNotionClient().databases.query({
+      database_id: info.databaseId,
+      filter: {
+        and: [
+          {
+            property: PROPERTY.contractKey,
+            rich_text: { equals: contractKey }
+          },
+          {
+            property: PROPERTY.status,
+            select: { equals: "OPEN" }
+          }
+        ]
+      }
+    })
+  );
 
   const page = response.results[0] as any;
   return page?.id ?? null;
 }
 export async function findPageIdBySnapTradeId(id: string) {
   const info = await getJournalInfo();
-  const response = await getNotionClient().databases.query({
-    database_id: info.databaseId,
-    filter: {
-      property: PROPERTY.snaptradeId,
-      rich_text: {
-        equals: id
+  const response = await withNotionRetry("databases.query(findPageIdBySnapTradeId)", () =>
+    getNotionClient().databases.query({
+      database_id: info.databaseId,
+      filter: {
+        property: PROPERTY.snaptradeId,
+        rich_text: {
+          equals: id
+        }
       }
-    }
-  });
+    })
+  );
 
   const page = response.results[0] as any;
   return page?.id ?? null;
@@ -423,7 +469,10 @@ export async function createTradePage(
     addIfExists(PROPERTY.tradeDate, { date: null });
     addIfExists(PROPERTY.tradeTime, { rich_text: [] });
   }
-  addIfExists(PROPERTY.strategy, { select: null });
+  {
+    const v = buildStrategyValue(info, []);
+    if (v) addIfExists(PROPERTY.strategy, v);
+  }
   addIfExists(PROPERTY.setup, { rich_text: [] });
   addIfExists(PROPERTY.notes, { rich_text: [] });
   addIfExists(PROPERTY.entryScreenshot, { files: [] });
@@ -472,7 +521,7 @@ export async function createPositionPage(params: {
   openTime?: string | null;
   lastAddDate?: string | null;
   // Manual fields (user-owned). We only set them at creation time.
-  strategy?: string | null;
+  strategies?: string[] | null;
   tags?: string[] | null;
   broker?: string | null;
   account?: string | null;
@@ -504,11 +553,9 @@ export async function createPositionPage(params: {
   addIfExists(PROPERTY.status, { select: { name: "OPEN" } });
   addIfExists(PROPERTY.qty, { number: params.qty });
   addIfExists(PROPERTY.fillPrice, { number: params.avgPrice });
-  if (params.strategy !== undefined) {
-    addIfExists(
-      PROPERTY.strategy,
-      params.strategy ? { select: { name: params.strategy } } : { select: null }
-    );
+  if (params.strategies !== undefined) {
+    const v = buildStrategyValue(info, params.strategies);
+    if (v) addIfExists(PROPERTY.strategy, v);
   }
   if (params.tags !== undefined) {
     addIfExists(
@@ -553,7 +600,7 @@ export async function createPositionPage(params: {
 }
 
 type ManualStrategyTags = {
-  strategy: string | null;
+  strategies: string[];
   tags: string[];
 };
 
@@ -571,8 +618,9 @@ export function manualKeyForPositionLoose(account: string, contractKey: string) 
 
 function mergeManual(a: ManualStrategyTags, b: ManualStrategyTags): ManualStrategyTags {
   const tags = Array.from(new Set([...(a.tags ?? []), ...(b.tags ?? [])]));
+  const strategies = Array.from(new Set([...(a.strategies ?? []), ...(b.strategies ?? [])]));
   return {
-    strategy: a.strategy ?? b.strategy ?? null,
+    strategies,
     tags
   };
 }
@@ -587,6 +635,23 @@ export function lookupManualStrategyTags(
   if (exact) return exact;
   const loose = index.get(manualKeyForPositionLoose(account, contractKey));
   return loose ?? null;
+}
+
+function buildStrategyValue(
+  info: DatabaseInfo,
+  strategies: string[] | null | undefined
+): any | undefined {
+  if (!info.properties[PROPERTY.strategy]) return undefined;
+  const type = info.properties[PROPERTY.strategy]?.type;
+  const list = (strategies ?? []).filter(Boolean);
+  if (type === "multi_select") {
+    return list.length > 0 ? { multi_select: list.map((name) => ({ name })) } : { multi_select: [] };
+  }
+  if (type === "select") {
+    const name = list[0] ?? null;
+    return name ? { select: { name } } : { select: null };
+  }
+  return undefined;
 }
 
 export async function loadManualStrategyTagsIndexForBroker(
@@ -622,17 +687,23 @@ export async function loadManualStrategyTagsIndexForBroker(
 
       const strategyProp = page.properties?.[PROPERTY.strategy];
       const tagsProp = page.properties?.[PROPERTY.tags];
-      const strategy =
-        strategyProp?.type === "select" ? strategyProp.select?.name ?? null : null;
+      const strategies =
+        strategyProp?.type === "select"
+          ? (strategyProp.select?.name ? [strategyProp.select.name] : [])
+          : strategyProp?.type === "multi_select"
+            ? (strategyProp.multi_select ?? [])
+                .map((t: any) => t?.name)
+                .filter(Boolean)
+            : [];
       const tags =
         tagsProp?.type === "multi_select"
           ? (tagsProp.multi_select ?? []).map((t: any) => t?.name).filter(Boolean)
           : [];
 
       // Only store if user actually set something.
-      if (!strategy && tags.length === 0) continue;
+      if (strategies.length === 0 && tags.length === 0) continue;
 
-      const value = { strategy, tags } satisfies ManualStrategyTags;
+      const value = { strategies, tags } satisfies ManualStrategyTags;
 
       const exactKey = manualKeyForPosition(account, contractKey, openDate);
       const prevExact = index.get(exactKey);
@@ -719,10 +790,12 @@ export async function updatePositionPage(params: {
     }
   }
 
-  return getNotionClient().pages.update({
-    page_id: params.pageId,
-    properties
-  });
+  return withNotionRetry("pages.update(updatePositionPage)", () =>
+    getNotionClient().pages.update({
+      page_id: params.pageId,
+      properties
+    })
+  );
 }
 
 export async function archiveAllPages() {

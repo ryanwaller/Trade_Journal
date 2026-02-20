@@ -19,6 +19,7 @@
     "backfill-fidelity-trade-type": "tsx src/cli.ts backfill-fidelity-trade-type",
     "backfill-fidelity-open-dates": "tsx src/cli.ts backfill-fidelity-open-dates",
     "reconcile-fidelity-csv": "tsx src/cli.ts reconcile-fidelity-csv",
+    "reconcile-fidelity-hybrid": "tsx src/cli.ts reconcile-fidelity-hybrid",
     "audit-robinhood-pl": "tsx src/cli.ts audit-robinhood-pl",
     "freshness-check": "tsx src/cli.ts freshness-check",
     "weekly-review": "tsx src/cli.ts weekly-review",

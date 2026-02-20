@@ -124,7 +124,7 @@ export async function runImportRobinhoodApi() {
             openTime,
             broker: "Robinhood",
             account: accountName,
-            strategy: manual?.strategy ?? undefined,
+            strategies: manual?.strategies ?? undefined,
             tags: manual?.tags ?? undefined
           });
           positions.set(key, {
@@ -226,7 +226,7 @@ export async function runImportRobinhoodApi() {
           avgPrice,
           broker: "Robinhood",
           account: accountName,
-          strategy: manual?.strategy ?? undefined,
+          strategies: manual?.strategies ?? undefined,
           tags: manual?.tags ?? undefined
         });
         created += 1;

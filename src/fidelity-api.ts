@@ -122,7 +122,7 @@ export async function runImportFidelityApi() {
             openTime,
             broker: "Fidelity",
             account: accountName,
-            strategy: manual?.strategy ?? undefined,
+            strategies: manual?.strategies ?? undefined,
             tags: manual?.tags ?? undefined
           });
           positions.set(key, {
@@ -222,7 +222,7 @@ export async function runImportFidelityApi() {
           avgPrice,
           broker: "Fidelity",
           account: accountName,
-          strategy: manual?.strategy ?? undefined,
+          strategies: manual?.strategies ?? undefined,
           tags: manual?.tags ?? undefined
         });
         created += 1;

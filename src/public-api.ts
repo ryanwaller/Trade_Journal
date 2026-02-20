@@ -125,7 +125,7 @@ export async function runImportPublicApi() {
             openTime,
             broker: "Public",
             account: accountName,
-            strategy: manual?.strategy ?? undefined,
+            strategies: manual?.strategies ?? undefined,
             tags: manual?.tags ?? undefined
           });
           positions.set(key, {
@@ -227,7 +227,7 @@ export async function runImportPublicApi() {
           avgPrice,
           broker: "Public",
           account: accountName,
-          strategy: manual?.strategy ?? undefined,
+          strategies: manual?.strategies ?? undefined,
           tags: manual?.tags ?? undefined
         });
         created += 1;
