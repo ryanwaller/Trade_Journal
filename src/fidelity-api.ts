@@ -22,6 +22,37 @@ function isOptionContract(contractKey: string) {
   return /\d{6}[CP]\d{8}$/.test(normalized);
 }
 
+function normalizeContractKey(value: string) {
+  return value.trim().replace(/^[-+]/, "").replace(/\s+/g, "").toUpperCase();
+}
+
+function optionExpiryFromContractKey(contractKey: string): string | null {
+  const compact = normalizeContractKey(contractKey);
+  const m = compact.match(/(\d{2})(\d{2})(\d{2})[CP]\d+(?:\.\d+)?$/);
+  if (!m) return null;
+  const yy = Number(m[1]);
+  const mm = Number(m[2]);
+  const dd = Number(m[3]);
+  if (!Number.isInteger(yy) || !Number.isInteger(mm) || !Number.isInteger(dd)) return null;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const fullYear = 2000 + yy;
+  const asDate = new Date(Date.UTC(fullYear, mm - 1, dd));
+  if (
+    asDate.getUTCFullYear() !== fullYear ||
+    asDate.getUTCMonth() !== mm - 1 ||
+    asDate.getUTCDate() !== dd
+  ) {
+    return null;
+  }
+  return `${fullYear.toString().padStart(4, "0")}-${mm.toString().padStart(2, "0")}-${dd
+    .toString()
+    .padStart(2, "0")}`;
+}
+
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
 function toDateString(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -57,6 +88,7 @@ export async function runImportFidelityApi() {
   let created = 0;
   let updated = 0;
   let ensuredOpenFromSnapshot = 0;
+  let autoExpiredClosed = 0;
   let fidelityAccountsProcessed = 0;
   let fidelityOrdersSeen = 0;
 
@@ -211,6 +243,59 @@ export async function runImportFidelityApi() {
       const avgPriceRaw = p.average_purchase_price ?? p.price ?? 0;
       const avgPrice = Math.round(avgPriceRaw * 100) / 100;
       const existing = positions.get(key);
+      const expiry = isOptionContract(p.symbol_key) ? optionExpiryFromContractKey(p.symbol_key) : null;
+      const isPastExpiry = Boolean(expiry && expiry < endDate);
+      if (isPastExpiry) {
+        if (!existing) {
+          const accountName = account.name ?? "Brokerage Account";
+          const manual = lookupManualStrategyTags(manualIndex, accountName, p.symbol_key, null);
+          const page = await createPositionPage({
+            title: p.ticker,
+            ticker: p.ticker,
+            contractKey: p.symbol_key,
+            qty: p.units,
+            avgPrice,
+            broker: "Fidelity",
+            account: accountName,
+            strategies: manual?.strategies ?? undefined,
+            tags: manual?.tags ?? undefined
+          });
+          await updatePositionPage({
+            pageId: (page as any).id,
+            ticker: p.ticker,
+            contractKey: p.symbol_key,
+            qty: p.units,
+            avgPrice,
+            status: "CLOSED",
+            closeDate: expiry,
+            closePrice: 0,
+            realizedPl: round2(-p.units * avgPrice)
+          });
+          created += 1;
+          updated += 1;
+          autoExpiredClosed += 1;
+        } else {
+          const multiplier = isOptionContract(p.symbol_key) ? 100 : 1;
+          const realizedPl = round2(
+            existing.realizedPl - existing.qty * existing.avgPrice * multiplier
+          );
+          await updatePositionPage({
+            pageId: existing.pageId,
+            ticker: p.ticker,
+            contractKey: p.symbol_key,
+            qty: existing.totalBought,
+            avgPrice: existing.avgPrice * multiplier,
+            status: "CLOSED",
+            closeDate: expiry,
+            closePrice: 0,
+            realizedPl
+          });
+          updated += 1;
+          autoExpiredClosed += 1;
+        }
+        // Do not keep/recreate OPEN rows for options already past expiry.
+        continue;
+      }
       if (!existing) {
         const accountName = account.name ?? "Brokerage Account";
         const manual = lookupManualStrategyTags(manualIndex, accountName, p.symbol_key, null);
@@ -251,6 +336,7 @@ export async function runImportFidelityApi() {
     fidelityOrdersSeen,
     createdRows: created,
     updatedRows: updated,
-    ensuredOpenFromSnapshot
+    ensuredOpenFromSnapshot,
+    autoExpiredClosed
   };
 }
